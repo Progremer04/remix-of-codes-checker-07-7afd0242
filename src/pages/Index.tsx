@@ -820,18 +820,34 @@ export default function Index() {
     
     for (const hit of hits) {
       // Create filename: [email][plan][credit].txt
-      const email = hit.email || 'unknown';
+      const email = (hit.email || 'unknown').replace(/[<>:"/\\|?*]/g, '_');
       const plan = (hit.plan || hit.membership || 'free').replace(/[^a-zA-Z0-9]/g, '_');
       const credits = hit.totalCredits || '0';
       const filename = `[${email}][${plan}][${credits}].txt`;
       
-      // Find original cookie content
-      const originalFile = manusUploadedFiles.find(f => 
-        f.name === hit.filename || f.content.includes(hit.email || '')
-      );
+      // Find original cookie content by filename or index
+      // Results come back in order, so we can match by index from filename (cookie_1.txt, cookie_2.txt, etc.)
+      let originalContent: string | null = null;
       
-      // Add to zip with original cookie content or placeholder
-      const content = originalFile?.content || `Email: ${email}\nPlan: ${plan}\nCredits: ${credits}`;
+      // Try to match by filename pattern (cookie_N.txt)
+      const indexMatch = hit.filename?.match(/cookie_(\d+)\.txt/);
+      if (indexMatch && manusUploadedFiles.length > 0) {
+        const idx = parseInt(indexMatch[1], 10) - 1;
+        if (idx >= 0 && idx < manusUploadedFiles.length) {
+          originalContent = manusUploadedFiles[idx].content;
+        }
+      }
+      
+      // Fallback: try to find by original filename
+      if (!originalContent) {
+        const matchByName = manusUploadedFiles.find(f => f.name === hit.filename);
+        if (matchByName) {
+          originalContent = matchByName.content;
+        }
+      }
+      
+      // Add to zip with original cookie content
+      const content = originalContent || `# Email: ${email}\n# Plan: ${plan}\n# Credits: ${credits}\n# Note: Original cookie content not found`;
       zip.file(filename, content);
     }
 
