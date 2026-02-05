@@ -1014,16 +1014,16 @@ export default function Index() {
     toast.success(`Downloaded ${items.length} ${type} hits`);
   };
 
-  // Watch for completion in realtime updates
+  // Watch for completion in realtime updates (Hotmail)
   useEffect(() => {
     if (!isHotmailChecking || hotmailUpdates.length === 0) return;
-    
+
     const lastUpdate = hotmailUpdates[hotmailUpdates.length - 1];
-    
+
     // Update progress
     const completed = hotmailUpdates.filter(u => u.status !== 'checking').length;
     setHotmailProgress(completed);
-    
+
     // Build live results from updates for real-time UI
     const liveResults: HotmailCheckResult[] = hotmailUpdates
       .filter(u => u.email !== 'COMPLETE' && u.status !== 'checking')
@@ -1035,7 +1035,7 @@ export default function Index() {
           password: u.password || '',
           status: u.status,
         };
-        
+
         // Parse subscription info from message
         if (msg.includes('GAME PASS') || msg.includes('M365')) {
           result.msStatus = 'PREMIUM';
@@ -1046,25 +1046,25 @@ export default function Index() {
         if (msg.includes('MC:')) {
           result.minecraft = { status: 'OWNED', username: msg.match(/MC:([^\s|]+)/)?.[1] || '' };
         }
-        
+
         return result;
       });
-    
+
     setHotmailResults(liveResults);
-    
+
     // Check for completion message
     if (lastUpdate?.email === 'COMPLETE' || lastUpdate?.message?.includes('Done!')) {
       setIsHotmailChecking(false);
       setIsHotmailPaused(false);
       setHotmailStatus('Complete!');
-      
+
       // Calculate stats from updates
       const valid = hotmailUpdates.filter(u => u.status === 'valid' || u.status === 'success').length;
       const invalid = hotmailUpdates.filter(u => u.status === 'invalid' || u.status === 'failed').length;
       const twoFa = hotmailUpdates.filter(u => u.status === '2fa').length;
-      
+
       const duration = ((Date.now() - hotmailStartTime) / 1000).toFixed(1);
-      
+
       setHotmailSessionInfo({
         startTime: new Date(hotmailStartTime).toISOString(),
         endTime: new Date().toISOString(),
@@ -1073,11 +1073,31 @@ export default function Index() {
         accountsProcessed: liveResults.length,
         successRate: `${((valid / Math.max(liveResults.length, 1)) * 100).toFixed(1)}%`
       });
-      
+
       toast.success(`Complete! ${valid} valid, ${invalid} invalid, ${twoFa} 2FA`);
     }
   }, [hotmailUpdates, isHotmailChecking, hotmailStartTime]);
 
+  // Watch realtime updates (Xbox) so progress + live feed keep working in background mode
+  useEffect(() => {
+    if (!xboxSessionId || xboxUpdates.length === 0) return;
+
+    const lastUpdate = xboxUpdates[xboxUpdates.length - 1];
+
+    // Update progress count based on completed items
+    const completed = xboxUpdates.filter(u => u.status !== 'checking' && u.email !== 'COMPLETE').length;
+    setXboxProgress(completed);
+
+    // Keep a human status line even after the initial invoke() returns
+    if (xboxAccountsList.length > 0) {
+      setXboxStatus(`Processing: ${completed}/${xboxAccountsList.length}`);
+    }
+
+    // Mark complete (do NOT hide the feed; user can reset manually)
+    if (lastUpdate?.email === 'COMPLETE' || lastUpdate?.message?.includes('Done!')) {
+      setXboxStatus('Complete!');
+    }
+  }, [xboxUpdates, xboxSessionId, xboxAccountsList.length]);
   const handleHotmailReset = () => {
     setHotmailResults([]);
     setHotmailProgress(0);
@@ -1554,7 +1574,7 @@ export default function Index() {
                       total={xboxAccountsList.length}
                       status={xboxStatus}
                     />
-                    {isXboxFetching && (
+                    {(isXboxFetching || xboxUpdates.length > 0) && (
                       <LiveProgressFeed 
                         updates={xboxUpdates}
                         isConnected={xboxConnected}
@@ -1744,7 +1764,7 @@ socks5://host:port
                       total={hotmailAccountsList.length}
                       status={hotmailStatus}
                     />
-                    {isHotmailChecking && (
+                    {(isHotmailChecking || hotmailUpdates.length > 0) && (
                       <LiveProgressFeed 
                         updates={hotmailUpdates}
                         isConnected={hotmailConnected}
