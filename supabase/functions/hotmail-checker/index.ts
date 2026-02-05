@@ -786,12 +786,20 @@ serve(async (req) => {
       threads = 5, 
       saveHistory = true,
       clientInfo = {},
-      sessionId = null
+      sessionId = null,
+      globalOffset = 0,
+      globalTotal = null
     } = await req.json();
+
+    // Use global total for progress if provided (chunked mode)
+    const displayTotal = globalTotal || accounts.length;
 
     console.log(`${sessionStartTime} ═══════════════════════════════════════════════`);
     console.log(`${sessionStartTime} HOTMAIL CHECKER SESSION STARTED`);
     console.log(`${sessionStartTime} User: ${userEmail || 'Anonymous'} | Accounts: ${accounts?.length || 0} | Threads: ${threads} | Mode: ${checkMode.toUpperCase()}`);
+    if (globalOffset > 0) {
+      console.log(`${sessionStartTime} Chunk mode: offset ${globalOffset}, total ${displayTotal}`);
+    }
     console.log(`${sessionStartTime} ───────────────────────────────────────────────`);
 
     if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
@@ -840,11 +848,14 @@ serve(async (req) => {
         const [email, ...passParts] = account.split(":");
         const password = passParts.join(":");
         
+        // Calculate global index for progress (in chunked mode)
+        const globalIndex = globalOffset + index + 1;
+        
         // Broadcast "checking" status like Python
         if (sessionId) {
           await broadcastProgress(sessionId, {
-            index: index + 1,
-            total: accounts.length,
+            index: globalIndex,
+            total: displayTotal,
             email: email || account,
             status: 'checking',
             message: `⟳ Checking...`,
@@ -856,8 +867,8 @@ serve(async (req) => {
           const result = { email: account, password: "", status: "error", error: "Invalid format", threadId } as CheckResult;
           if (sessionId) {
             await broadcastProgress(sessionId, {
-              index: index + 1,
-              total: accounts.length,
+              index: globalIndex,
+              total: displayTotal,
               email: account,
               status: 'failed',
               message: '✗ Invalid format',
@@ -919,11 +930,11 @@ serve(async (req) => {
           message = `! Error: ${result.error || 'Unknown'}`;
         }
         
-        // Broadcast result with detailed message
+        // Broadcast result with detailed message (use global index)
         if (sessionId) {
           await broadcastProgress(sessionId, {
-            index: index + 1,
-            total: accounts.length,
+            index: globalIndex,
+            total: displayTotal,
             email: email,
             status: result.status as any,
             message,
