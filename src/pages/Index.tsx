@@ -311,12 +311,30 @@ export default function Index() {
     return userServices.includes(service);
   };
 
-  // Save history to Firebase with full results
+  const getFirebaseIdToken = async (): Promise<string | null> => {
+    try {
+      if (!user) return null;
+      return await user.getIdToken();
+    } catch (e) {
+      console.warn('Failed to get Firebase ID token:', e);
+      return null;
+    }
+  };
+
+  const invokeBackendFunction = async <TData,>(functionName: string, body: any) => {
+    const firebaseToken = await getFirebaseIdToken();
+    return await supabase.functions.invoke<TData>(functionName, {
+      body,
+      headers: firebaseToken ? { 'x-firebase-token': firebaseToken } : undefined,
+    });
+  };
+
+  // Save history to Firebase (user-scoped path to satisfy RTDB rules)
   const saveHistory = async (service: string, inputCount: number, stats: any, results?: any[]) => {
     if (!user) return;
-    
+
     try {
-      const historyRef = ref(database, 'checkHistory');
+      const historyRef = ref(database, `users/${user.uid}/checkHistory`);
       const newHistoryRef = push(historyRef);
       await set(newHistoryRef, {
         userId: user.uid,
@@ -325,7 +343,7 @@ export default function Index() {
         inputCount,
         stats,
         results: results || [],
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
       });
     } catch (e) {
       console.error('Failed to save history:', e);
@@ -351,6 +369,8 @@ export default function Index() {
     try {
       setCheckStatus('Processing codes...');
       
+      const firebaseToken = await getFirebaseIdToken();
+
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/check-codes`,
         {
@@ -358,9 +378,10 @@ export default function Index() {
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+            ...(firebaseToken ? { 'x-firebase-token': firebaseToken } : {}),
           },
-          body: JSON.stringify({ wlids: wlidsList, codes: codesList, threads: checkThreads, username })
+          body: JSON.stringify({ wlids: wlidsList, codes: codesList, threads: checkThreads, username }),
         }
       );
 
@@ -504,8 +525,10 @@ export default function Index() {
     setClaimStatus('Connecting to server...');
 
     try {
-      const { data, error } = await supabase.functions.invoke('claim-wlids', {
-        body: { accounts: accountsList, threads: claimThreads, username }
+      const { data, error } = await invokeBackendFunction<any>('claim-wlids', {
+        accounts: accountsList,
+        threads: claimThreads,
+        username,
       });
 
       if (error) {
@@ -561,8 +584,10 @@ export default function Index() {
     setXboxStatus('Connecting to server...');
 
     try {
-      const { data, error } = await supabase.functions.invoke('xbox-fetcher', {
-        body: { accounts: xboxAccountsList, threads: xboxThreads, username }
+      const { data, error } = await invokeBackendFunction<any>('xbox-fetcher', {
+        accounts: xboxAccountsList,
+        threads: xboxThreads,
+        username,
       });
 
       if (error) {
@@ -627,13 +652,11 @@ export default function Index() {
         userAgent: navigator.userAgent
       };
 
-      const { data, error } = await supabase.functions.invoke('manus-checker', {
-        body: { 
-          cookies: manusCookiesList, 
-          threads: manusThreads, 
-          username,
-          clientInfo
-        }
+      const { data, error } = await invokeBackendFunction<any>('manus-checker', {
+        cookies: manusCookiesList,
+        threads: manusThreads,
+        username,
+        clientInfo,
       });
 
       if (error) {
@@ -756,14 +779,12 @@ export default function Index() {
         userAgent: navigator.userAgent
       };
 
-      const { data, error } = await supabase.functions.invoke('hotmail-checker', {
-        body: { 
-          accounts: hotmailAccountsList, 
-          checkMode: hotmailCheckMode,
-          threads: hotmailThreads,
-          proxies: proxyList,
-          clientInfo
-        }
+      const { data, error } = await invokeBackendFunction<any>('hotmail-checker', {
+        accounts: hotmailAccountsList,
+        checkMode: hotmailCheckMode,
+        threads: hotmailThreads,
+        proxies: proxyList,
+        clientInfo,
       });
 
       if (error) {
