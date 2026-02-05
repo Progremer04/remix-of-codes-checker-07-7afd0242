@@ -36,15 +36,29 @@ export function useRealtimeProgress(sessionId: string | null) {
     channel
       .on('broadcast', { event: 'progress' }, (payload) => {
         const update = payload.payload as ProgressUpdate;
-        setUpdates(prev => {
+        const MAX_UPDATES = 5000;
+
+        setUpdates((prev) => {
           // Replace if same index exists, otherwise add
-          const existing = prev.findIndex(u => u.index === update.index);
+          const existing = prev.findIndex((u) => u.index === update.index);
+
+          let next = prev;
           if (existing >= 0) {
-            const newUpdates = [...prev];
-            newUpdates[existing] = update;
-            return newUpdates;
+            next = [...prev];
+            next[existing] = update;
+          } else {
+            next = [...prev, update];
           }
-          return [...prev, update].slice(-100); // Keep last 100
+
+          // Keep updates ordered so the feed/progress math is stable
+          next.sort((a, b) => a.index - b.index);
+
+          // Prevent unbounded memory growth on very large lists
+          if (next.length > MAX_UPDATES) {
+            next = next.slice(next.length - MAX_UPDATES);
+          }
+
+          return next;
         });
       })
       .subscribe((status) => {

@@ -28,6 +28,7 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
 
   // Calculate stats like Python's LiveStats
   const stats = useMemo(() => {
+    const checking = updates.filter(u => u.status === 'checking').length;
     const completed = updates.filter(u => u.status !== 'checking');
     const hits = completed.filter(u => u.status === 'valid' || u.status === 'success').length;
     const twoFa = completed.filter(u => u.status === '2fa').length;
@@ -35,7 +36,7 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
     const bads = completed.filter(u => u.status === 'invalid' || u.status === 'failed').length;
     const errors = completed.filter(u => u.status === 'error').length;
     const noCodes = completed.filter(u => u.status === 'no_codes').length;
-    
+
     // Calculate CPM (checks per minute) - smoothed like typical Python CLI stats
     // Use only COMPLETED checks within the last 60s to avoid spikes.
     const now = Date.now();
@@ -49,7 +50,7 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
       const elapsedMin = elapsedMs / 60000;
       if (elapsedMin > 0) cpm = Math.round(windowCompleted.length / elapsedMin);
     }
-    
+
     // Estimated time remaining
     let eta = '--:--';
     if (cpm > 0 && total > 0) {
@@ -59,13 +60,14 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
       const etaSecs = (etaSeconds % 60).toString().padStart(2, '0');
       eta = `${etaMins}:${etaSecs}`;
     }
-    
-    return { 
-      completed: completed.length, 
-      hits, 
-      twoFa, 
-      locked, 
-      bads, 
+
+    return {
+      checking,
+      completed: completed.length,
+      hits,
+      twoFa,
+      locked,
+      bads,
       errors,
       noCodes,
       cpm,
@@ -102,7 +104,7 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
   }
 
   return (
-    <div className="card-3d rounded-xl p-4 space-y-3 font-mono animate-fade-in">
+    <div className="card-3d relative rounded-xl p-4 space-y-3 font-mono animate-fade-in">
       {/* Python-style header bar */}
       <div className="flex items-center justify-between text-xs border-b border-border/50 pb-2">
         <div className="flex items-center gap-2">
@@ -135,13 +137,14 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
         {/* Progress count like Python: [checked/total] */}
         <span className="text-blue-400 font-bold">[{stats.completed}/{total}]</span>
         
-        {/* Stats with icons */}
+        {/* Stats with icons (show EVERYTHING; don't hide zeros) */}
+        <StatBadge count={stats.checking} label="Checking" color="text-blue-300" icon="⟳" show={true} />
         <StatBadge count={stats.hits} label="Valid" color="text-green-400" icon="✓" show={true} />
-        <StatBadge count={stats.twoFa} label="2FA" color="text-orange-400" icon="🔐" show={stats.twoFa > 0} />
-        <StatBadge count={stats.locked} label="Locked" color="text-red-500" icon="🔒" show={stats.locked > 0} />
-        <StatBadge count={stats.bads} label="Invalid" color="text-red-400" icon="✗" show={stats.bads > 0} />
-        <StatBadge count={stats.noCodes} label="No Codes" color="text-yellow-400" icon="○" show={stats.noCodes > 0} />
-        <StatBadge count={stats.errors} label="Errors" color="text-gray-400" icon="!" show={stats.errors > 0} />
+        <StatBadge count={stats.twoFa} label="2FA" color="text-orange-400" icon="🔐" show={true} />
+        <StatBadge count={stats.locked} label="Locked" color="text-red-500" icon="🔒" show={true} />
+        <StatBadge count={stats.bads} label="Invalid" color="text-red-400" icon="✗" show={true} />
+        <StatBadge count={stats.noCodes} label="No Codes" color="text-yellow-400" icon="○" show={true} />
+        <StatBadge count={stats.errors} label="Errors" color="text-gray-400" icon="!" show={true} />
         
         {/* Separator */}
         <span className="text-muted-foreground">|</span>
