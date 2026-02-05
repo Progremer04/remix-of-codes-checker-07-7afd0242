@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Key, Code, Play, Loader2, CheckCircle, XCircle, Clock, 
   AlertTriangle, RotateCcw, Users, Settings2, Gamepad2, 
-  Cookie, Shield, Gift, LogOut, Mail, ShoppingCart
+  Cookie, Shield, Gift, LogOut, Mail, ShoppingCart, LayoutDashboard, Upload
 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { CodeInput } from '@/components/CodeInput';
@@ -11,6 +11,8 @@ import { ResultCard } from '@/components/ResultCard';
 import { StatsCard } from '@/components/StatsCard';
 import { ProgressBar } from '@/components/ProgressBar';
 import { Background3D } from '@/components/Background3D';
+import { UserDashboard } from '@/components/UserDashboard';
+import { ManusFileUpload } from '@/components/ManusFileUpload';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -731,8 +733,12 @@ export default function Index() {
           </div>
         </div>
 
-        <Tabs defaultValue="checker" className="w-full">
-          <TabsList className="grid w-full max-w-3xl mx-auto grid-cols-5 glass-card mb-8">
+        <Tabs defaultValue="dashboard" className="w-full">
+          <TabsList className="grid w-full max-w-4xl mx-auto grid-cols-6 glass-card mb-8">
+            <TabsTrigger value="dashboard" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <LayoutDashboard className="w-4 h-4 mr-2" />
+              Dashboard
+            </TabsTrigger>
             <TabsTrigger value="checker" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Code className="w-4 h-4 mr-2" />
               Codes
@@ -754,6 +760,11 @@ export default function Index() {
               Manus
             </TabsTrigger>
           </TabsList>
+
+          {/* Dashboard Tab */}
+          <TabsContent value="dashboard" className="space-y-8">
+            <UserDashboard />
+          </TabsContent>
 
           {/* Codes Checker Tab */}
           <TabsContent value="checker" className="space-y-8">
@@ -1295,6 +1306,21 @@ export default function Index() {
             
             {hasServiceAccess('manus_checker') && (
               <>
+                {/* File Upload Section */}
+                <div className="max-w-2xl mx-auto">
+                  <ManusFileUpload 
+                    onFilesLoaded={(cookies) => {
+                      setManusCookies(cookies.join('\n---\n'));
+                      toast.success(`Loaded ${cookies.length} cookies from files`);
+                    }}
+                    isLoading={isManusChecking}
+                  />
+                </div>
+
+                <div className="text-center text-muted-foreground text-sm">
+                  — OR paste cookies directly —
+                </div>
+
                 <div className="max-w-2xl mx-auto">
                   <CodeInput
                     label="Manus Cookies"

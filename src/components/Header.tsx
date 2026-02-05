@@ -1,5 +1,6 @@
 import { Sparkles, Zap, LogOut, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { NotificationBell } from '@/components/NotificationBell';
 
 interface HeaderProps {
   username?: string;
@@ -34,6 +35,7 @@ export function Header({ username, onLogout }: HeaderProps) {
           <div className="flex items-center gap-4">
             {username && (
               <div className="flex items-center gap-3">
+                <NotificationBell />
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary/50 border border-border/50">
                   <User className="w-4 h-4 text-primary" />
                   <span className="text-sm font-medium text-foreground">{username}</span>
