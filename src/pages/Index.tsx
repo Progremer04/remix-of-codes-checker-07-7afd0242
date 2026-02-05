@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Key, Code, Play, Loader2, CheckCircle, XCircle, Clock, 
   AlertTriangle, RotateCcw, Users, Settings2, Gamepad2, 
-  Cookie, Shield, Gift, LogOut, Mail, ShoppingCart, LayoutDashboard, Upload
+  Cookie, Shield, Gift, LogOut, Mail, ShoppingCart, LayoutDashboard, Upload, Download, Zap
 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { CodeInput } from '@/components/CodeInput';
@@ -12,7 +12,7 @@ import { StatsCard } from '@/components/StatsCard';
 import { ProgressBar } from '@/components/ProgressBar';
 import { Background3D } from '@/components/Background3D';
 import { UserDashboard } from '@/components/UserDashboard';
-import { ManusFileUpload } from '@/components/ManusFileUpload';
+import { ManusFileUpload, UploadedFile } from '@/components/ManusFileUpload';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -24,6 +24,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useFirebaseAuth } from '@/hooks/useFirebaseAuth';
 import { ref, push, set } from 'firebase/database';
 import { database } from '@/integrations/firebase/config';
+import JSZip from 'jszip';
 
 interface ClaimResult {
   email: string;
@@ -175,8 +176,10 @@ export default function Index() {
   const [manusProgress, setManusProgress] = useState(0);
   const [manusStatus, setManusStatus] = useState('');
   const [manusResults, setManusResults] = useState<ManusCheckResult[]>([]);
+  const [manusLiveHits, setManusLiveHits] = useState<ManusCheckResult[]>([]);
   const [manusThreads, setManusThreads] = useState(5);
   const [manusSessionInfo, setManusSessionInfo] = useState<ManusSessionInfo | null>(null);
+  const [manusUploadedFiles, setManusUploadedFiles] = useState<UploadedFile[]>([]);
 
   // Hotmail Checker State
   const [hotmailAccounts, setHotmailAccounts] = useState('');
@@ -609,6 +612,7 @@ export default function Index() {
 
     setIsManusChecking(true);
     setManusResults([]);
+    setManusLiveHits([]);
     setManusProgress(0);
     setManusSessionInfo(null);
     setManusStatus('Connecting to server...');
@@ -643,6 +647,10 @@ export default function Index() {
         return;
       }
 
+      // Update live hits as results come in
+      const hits = data.results.filter((r: ManusCheckResult) => r.status === 'success');
+      setManusLiveHits(hits);
+      
       setManusResults(data.results);
       setManusSessionInfo(data.sessionInfo);
       setManusProgress(manusCookiesList.length);
@@ -663,9 +671,49 @@ export default function Index() {
 
   const handleManusReset = () => {
     setManusResults([]);
+    setManusLiveHits([]);
     setManusProgress(0);
     setManusStatus('');
     setManusSessionInfo(null);
+    setManusUploadedFiles([]);
+  };
+
+  // Download Manus hits as ZIP with cookie files named [email][plan][credit].txt
+  const downloadManusHitsZip = async () => {
+    const hits = manusResults.filter(r => r.status === 'success');
+    if (hits.length === 0) {
+      toast.error('No hits to download');
+      return;
+    }
+
+    const zip = new JSZip();
+    
+    for (const hit of hits) {
+      // Create filename: [email][plan][credit].txt
+      const email = hit.email || 'unknown';
+      const plan = (hit.plan || hit.membership || 'free').replace(/[^a-zA-Z0-9]/g, '_');
+      const credits = hit.totalCredits || '0';
+      const filename = `[${email}][${plan}][${credits}].txt`;
+      
+      // Find original cookie content
+      const originalFile = manusUploadedFiles.find(f => 
+        f.name === hit.filename || f.content.includes(hit.email || '')
+      );
+      
+      // Add to zip with original cookie content or placeholder
+      const content = originalFile?.content || `Email: ${email}\nPlan: ${plan}\nCredits: ${credits}`;
+      zip.file(filename, content);
+    }
+
+    // Generate and download ZIP
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `manus_hits_${new Date().toISOString().slice(0, 10)}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Downloaded ${hits.length} hits as ZIP`);
   };
 
   // Hotmail Checker functions
@@ -1523,8 +1571,9 @@ socks5://host:port
                 {/* File Upload Section */}
                 <div className="max-w-2xl mx-auto">
                   <ManusFileUpload 
-                    onFilesLoaded={(cookies) => {
+                    onFilesLoaded={(cookies, files) => {
                       setManusCookies(cookies.join('\n---\n'));
+                      setManusUploadedFiles(files);
                       toast.success(`Loaded ${cookies.length} cookies from files`);
                     }}
                     isLoading={isManusChecking}
@@ -1594,12 +1643,32 @@ socks5://host:port
                 </div>
 
                 {(isManusChecking || manusProgress > 0) && (
-                  <div className="max-w-2xl mx-auto">
+                  <div className="max-w-2xl mx-auto space-y-4">
                     <ProgressBar
                       current={manusProgress}
                       total={manusCookiesList.length}
                       status={manusStatus}
                     />
+                    
+                    {/* Live Hits Panel - Shows during checking */}
+                    {isManusChecking && manusLiveHits.length > 0 && (
+                      <div className="glass-card p-4 rounded-xl border border-success/30 animate-pulse-glow">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Zap className="w-4 h-4 text-success animate-pulse" />
+                          <span className="text-success font-semibold">LIVE HITS ({manusLiveHits.length})</span>
+                        </div>
+                        <div className="max-h-40 overflow-y-auto space-y-1 font-mono text-xs">
+                          {manusLiveHits.slice(-10).map((hit, idx) => (
+                            <div key={idx} className="flex items-center gap-2 text-success/90">
+                              <CheckCircle className="w-3 h-3 flex-shrink-0" />
+                              <span className="truncate">
+                                {hit.email} | {hit.plan || hit.membership} | {hit.totalCredits} credits
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1664,6 +1733,18 @@ socks5://host:port
                         icon={<Clock className="w-5 h-5" />}
                         colorClass="text-blue-500"
                       />
+                    </div>
+
+                    {/* Download Hits as ZIP Button */}
+                    <div className="flex justify-center">
+                      <Button
+                        onClick={downloadManusHitsZip}
+                        disabled={manusStats.success === 0}
+                        className="gradient-primary shadow-3d hover:shadow-glow"
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        Download Hits as ZIP ({manusStats.success})
+                      </Button>
                     </div>
 
                     {/* Results - Hits with Email | Plan | Credits */}

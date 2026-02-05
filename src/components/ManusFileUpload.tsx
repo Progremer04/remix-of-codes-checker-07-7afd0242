@@ -4,14 +4,14 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import JSZip from 'jszip';
 
-interface UploadedFile {
+export interface UploadedFile {
   name: string;
   content: string;
   source: 'file' | 'zip';
 }
 
 interface ManusFileUploadProps {
-  onFilesLoaded: (cookies: string[]) => void;
+  onFilesLoaded: (cookies: string[], files: UploadedFile[]) => void;
   isLoading?: boolean;
 }
 
@@ -124,7 +124,7 @@ export function ManusFileUpload({ onFilesLoaded, isLoading }: ManusFileUploadPro
     }
     
     const cookies = files.map(f => f.content);
-    onFilesLoaded(cookies);
+    onFilesLoaded(cookies, files);
   };
 
   return (
