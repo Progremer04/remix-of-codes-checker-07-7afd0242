@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { format } from 'date-fns';
 import { 
   Shield, Users, Gift, History, Plus, Trash2, 
   ToggleLeft, ToggleRight, Copy, Loader2, ArrowLeft,
   CheckCircle, XCircle, Download, Eye, Search, UserPlus,
-  FileText, Filter, Bell, Send
+  FileText, Filter, Bell, Send, CalendarIcon
 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Background3D } from '@/components/Background3D';
@@ -17,6 +18,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
+import { cn } from '@/lib/utils';
 import { useFirebaseAuth } from '@/hooks/useFirebaseAuth';
 import { ref, set, get, push, remove, onValue } from 'firebase/database';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
@@ -87,7 +91,8 @@ export default function Admin() {
   // New code form
   const [newCodeServices, setNewCodeServices] = useState<string[]>([]);
   const [newCodeMaxUses, setNewCodeMaxUses] = useState(1);
-  const [newCodeExpiry, setNewCodeExpiry] = useState('');
+  const [newCodeExpiryDate, setNewCodeExpiryDate] = useState<Date | undefined>(undefined);
+  const [newCodeExpiryTime, setNewCodeExpiryTime] = useState('23:59');
 
   // New user form
   const [newUserEmail, setNewUserEmail] = useState('');
@@ -194,12 +199,21 @@ export default function Admin() {
         'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Math.floor(Math.random() * 36)]
       ).join('');
       
+      // Build expiry datetime
+      let expiresAt: string | null = null;
+      if (newCodeExpiryDate) {
+        const [hours, minutes] = newCodeExpiryTime.split(':').map(Number);
+        const expiryDateTime = new Date(newCodeExpiryDate);
+        expiryDateTime.setHours(hours, minutes, 0, 0);
+        expiresAt = expiryDateTime.toISOString();
+      }
+
       const codeData: Omit<RedeemCode, 'id' | 'code'> = {
         services: newCodeServices,
         maxUses: newCodeMaxUses,
         currentUses: 0,
         isActive: true,
-        expiresAt: newCodeExpiry || null,
+        expiresAt,
         createdAt: new Date().toISOString(),
         createdBy: user?.uid || ''
       };
@@ -209,7 +223,8 @@ export default function Admin() {
       toast.success(`Code generated: ${code}`);
       setNewCodeServices([]);
       setNewCodeMaxUses(1);
-      setNewCodeExpiry('');
+      setNewCodeExpiryDate(undefined);
+      setNewCodeExpiryTime('23:59');
       
       navigator.clipboard.writeText(code);
       toast.success('Code copied to clipboard!');
@@ -558,13 +573,52 @@ export default function Admin() {
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="expiry">Expiry Date (optional)</Label>
-                  <Input
-                    id="expiry"
-                    type="datetime-local"
-                    value={newCodeExpiry}
-                    onChange={(e) => setNewCodeExpiry(e.target.value)}
-                  />
+                  <Label>Expiry Date & Time (optional)</Label>
+                  <div className="flex gap-2">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={cn(
+                            "flex-1 justify-start text-left font-normal",
+                            !newCodeExpiryDate && "text-muted-foreground"
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {newCodeExpiryDate ? format(newCodeExpiryDate, "PPP") : "Pick a date"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={newCodeExpiryDate}
+                          onSelect={setNewCodeExpiryDate}
+                          disabled={(date) => date < new Date()}
+                          initialFocus
+                          className="p-3 pointer-events-auto"
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    <Input
+                      type="time"
+                      value={newCodeExpiryTime}
+                      onChange={(e) => setNewCodeExpiryTime(e.target.value)}
+                      className="w-28"
+                    />
+                  </div>
+                  {newCodeExpiryDate && (
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => {
+                        setNewCodeExpiryDate(undefined);
+                        setNewCodeExpiryTime('23:59');
+                      }}
+                      className="text-xs text-muted-foreground"
+                    >
+                      Clear expiry
+                    </Button>
+                  )}
                 </div>
               </div>
               
