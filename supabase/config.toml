@@ -1,1 +1,19 @@
-project_id = "hpvdsoqkuilfnyqftcwh"
+ project_id = "hpvdsoqkuilfnyqftcwh"
+ 
+ [functions.check-codes]
+ verify_jwt = false
+ 
+ [functions.claim-wlids]
+ verify_jwt = false
+ 
+ [functions.xbox-fetcher]
+ verify_jwt = false
+ 
+ [functions.manus-checker]
+ verify_jwt = false
+ 
+ [functions.admin]
+ verify_jwt = false
+ 
+ [functions.redeem-code]
+ verify_jwt = false

@@ -14,16 +14,207 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      check_history: {
+        Row: {
+          created_at: string
+          id: string
+          input_count: number | null
+          results: Json | null
+          service: Database["public"]["Enums"]["app_service"]
+          stats: Json | null
+          user_id: string | null
+          username: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          input_count?: number | null
+          results?: Json | null
+          service: Database["public"]["Enums"]["app_service"]
+          stats?: Json | null
+          user_id?: string | null
+          username: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          input_count?: number | null
+          results?: Json | null
+          service?: Database["public"]["Enums"]["app_service"]
+          stats?: Json | null
+          user_id?: string | null
+          username?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          email: string | null
+          id: string
+          updated_at: string
+          user_id: string
+          username: string
+        }
+        Insert: {
+          created_at?: string
+          email?: string | null
+          id?: string
+          updated_at?: string
+          user_id: string
+          username: string
+        }
+        Update: {
+          created_at?: string
+          email?: string | null
+          id?: string
+          updated_at?: string
+          user_id?: string
+          username?: string
+        }
+        Relationships: []
+      }
+      redeem_codes: {
+        Row: {
+          code: string
+          created_at: string
+          created_by: string | null
+          current_uses: number | null
+          expires_at: string | null
+          id: string
+          is_active: boolean | null
+          max_uses: number | null
+          services: Database["public"]["Enums"]["app_service"][]
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          created_by?: string | null
+          current_uses?: number | null
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          max_uses?: number | null
+          services?: Database["public"]["Enums"]["app_service"][]
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          current_uses?: number | null
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          max_uses?: number | null
+          services?: Database["public"]["Enums"]["app_service"][]
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      redeemed_codes: {
+        Row: {
+          code_id: string
+          id: string
+          redeemed_at: string
+          user_id: string
+        }
+        Insert: {
+          code_id: string
+          id?: string
+          redeemed_at?: string
+          user_id: string
+        }
+        Update: {
+          code_id?: string
+          id?: string
+          redeemed_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "redeemed_codes_code_id_fkey"
+            columns: ["code_id"]
+            isOneToOne: false
+            referencedRelation: "redeem_codes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_services: {
+        Row: {
+          expires_at: string | null
+          granted_at: string
+          id: string
+          service: Database["public"]["Enums"]["app_service"]
+          user_id: string
+        }
+        Insert: {
+          expires_at?: string | null
+          granted_at?: string
+          id?: string
+          service: Database["public"]["Enums"]["app_service"]
+          user_id: string
+        }
+        Update: {
+          expires_at?: string | null
+          granted_at?: string
+          id?: string
+          service?: Database["public"]["Enums"]["app_service"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      has_service_access: {
+        Args: {
+          _service: Database["public"]["Enums"]["app_service"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "user"
+      app_service:
+        | "codes_checker"
+        | "wlid_claimer"
+        | "xbox_fetcher"
+        | "manus_checker"
+        | "hotmail_validator"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +341,15 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "user"],
+      app_service: [
+        "codes_checker",
+        "wlid_claimer",
+        "xbox_fetcher",
+        "manus_checker",
+        "hotmail_validator",
+      ],
+    },
   },
 } as const
