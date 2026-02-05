@@ -277,15 +277,15 @@ export default function Index() {
   );
 
   const xboxStats = useMemo(() => ({
-    success: xboxResults.filter(r => r.status === 'success').length,
-    noCodes: xboxResults.filter(r => r.status === 'no_codes').length,
-    failed: xboxResults.filter(r => !['success', 'no_codes'].includes(r.status)).length,
-    totalCodes: xboxResults.reduce((sum, r) => sum + r.codes.length, 0),
-    total: xboxResults.length,
+    success: (xboxResults || []).filter(r => r.status === 'success').length,
+    noCodes: (xboxResults || []).filter(r => r.status === 'no_codes').length,
+    failed: (xboxResults || []).filter(r => !['success', 'no_codes'].includes(r.status)).length,
+    totalCodes: (xboxResults || []).reduce((sum, r) => sum + (r.codes?.length || 0), 0),
+    total: (xboxResults || []).length,
   }), [xboxResults]);
 
   const allXboxCodes = useMemo(() => 
-    xboxResults.flatMap(r => r.codes),
+    (xboxResults || []).flatMap(r => r.codes || []),
     [xboxResults]
   );
 
@@ -296,9 +296,9 @@ export default function Index() {
   );
 
   const manusStats = useMemo(() => ({
-    success: manusResults.filter(r => r.status === 'success').length,
-    failed: manusResults.filter(r => r.status === 'failed').length,
-    total: manusResults.length,
+    success: (manusResults || []).filter(r => r.status === 'success').length,
+    failed: (manusResults || []).filter(r => r.status === 'failed').length,
+    total: (manusResults || []).length,
   }), [manusResults]);
 
   // Hotmail Checker computed values
@@ -308,17 +308,17 @@ export default function Index() {
   );
 
   const hotmailStats = useMemo(() => ({
-    valid: hotmailResults.filter(r => r.status === 'valid').length,
-    invalid: hotmailResults.filter(r => r.status === 'invalid').length,
-    twoFa: hotmailResults.filter(r => r.status === '2fa').length,
-    locked: hotmailResults.filter(r => r.status === 'locked').length,
-    msPremium: hotmailResults.filter(r => r.msStatus === 'PREMIUM').length,
-    psnHits: hotmailResults.filter(r => r.psn?.status === 'HAS_ORDERS').length,
-    steamHits: hotmailResults.filter(r => r.steam?.status === 'HAS_PURCHASES').length,
-    supercellHits: hotmailResults.filter(r => r.supercell?.status === 'LINKED').length,
-    tiktokHits: hotmailResults.filter(r => r.tiktok?.status === 'LINKED').length,
-    minecraftHits: hotmailResults.filter(r => r.minecraft?.status === 'OWNED').length,
-    total: hotmailResults.length,
+    valid: (hotmailResults || []).filter(r => r.status === 'valid').length,
+    invalid: (hotmailResults || []).filter(r => r.status === 'invalid').length,
+    twoFa: (hotmailResults || []).filter(r => r.status === '2fa').length,
+    locked: (hotmailResults || []).filter(r => r.status === 'locked').length,
+    msPremium: (hotmailResults || []).filter(r => r.msStatus === 'PREMIUM').length,
+    psnHits: (hotmailResults || []).filter(r => r.psn?.status === 'HAS_ORDERS').length,
+    steamHits: (hotmailResults || []).filter(r => r.steam?.status === 'HAS_PURCHASES').length,
+    supercellHits: (hotmailResults || []).filter(r => r.supercell?.status === 'LINKED').length,
+    tiktokHits: (hotmailResults || []).filter(r => r.tiktok?.status === 'LINKED').length,
+    minecraftHits: (hotmailResults || []).filter(r => r.minecraft?.status === 'OWNED').length,
+    total: (hotmailResults || []).length,
   }), [hotmailResults]);
 
   // Check service access
@@ -352,13 +352,18 @@ export default function Index() {
     try {
       const historyRef = ref(database, `users/${user.uid}/checkHistory`);
       const newHistoryRef = push(historyRef);
+      
+      // Sanitize stats - remove undefined values (Firebase doesn't allow undefined)
+      const sanitizedStats = stats ? JSON.parse(JSON.stringify(stats)) : {};
+      const sanitizedResults = results ? JSON.parse(JSON.stringify(results)) : [];
+      
       await set(newHistoryRef, {
         userId: user.uid,
-        username: userData?.displayName || user.email,
+        username: userData?.displayName || user.email || 'Unknown',
         service,
-        inputCount,
-        stats,
-        results: results || [],
+        inputCount: inputCount || 0,
+        stats: sanitizedStats,
+        results: sanitizedResults,
         createdAt: new Date().toISOString(),
       });
     } catch (e) {
@@ -682,12 +687,24 @@ export default function Index() {
         return;
       }
 
-      setXboxResults(data.results);
+      // Handle background processing mode - results come via realtime updates
+      if (data.status === 'processing') {
+        console.log('Xbox background job started:', data);
+        setXboxStatus(`Processing ${data.total} accounts...`);
+        toast.success(`Started processing ${data.total} accounts. Watch the live progress feed.`);
+        // Don't set results here - they'll come via realtime updates
+        // Save initial history entry
+        await saveHistory('xbox_fetcher', xboxAccountsList.length, { status: 'processing', total: data.total }, []);
+        return;
+      }
+
+      // Handle direct results (if returned synchronously)
+      setXboxResults(data.results || []);
       setXboxProgress(xboxAccountsList.length);
       setXboxStatus('Complete!');
       toast.success(`Found ${data.stats?.totalCodes || 0} codes from ${data.stats?.success || 0} accounts`);
       
-      await saveHistory('xbox_fetcher', xboxAccountsList.length, data.stats, data.results);
+      await saveHistory('xbox_fetcher', xboxAccountsList.length, data.stats || {}, data.results || []);
 
     } catch (err) {
       console.error('Error:', err);
