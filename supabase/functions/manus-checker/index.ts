@@ -1,9 +1,10 @@
- import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
- 
- const corsHeaders = {
-   "Access-Control-Allow-Origin": "*",
-   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
- };
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { firebasePush, firebaseGet, verifyFirebaseIdToken } from "../_shared/firebase-admin.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token",
+};
  
  interface CheckRequest {
    cookies: string[];
@@ -229,52 +230,88 @@
    return results;
  }
  
- serve(async (req) => {
-   if (req.method === "OPTIONS") {
-     return new Response(null, { headers: corsHeaders });
-   }
- 
-   try {
-     const { cookies, threads = 5, username }: CheckRequest = await req.json();
- 
-     console.log(`Starting Manus check for ${cookies.length} cookies, ${threads} threads, user: ${username || 'unknown'}`);
- 
-     if (!cookies || cookies.length === 0) {
-       return new Response(
-         JSON.stringify({ error: "Cookies are required" }),
-         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-       );
-     }
- 
-     const concurrency = Math.min(threads, 10);
-     const results = await processWithWorkerPool(
-       cookies,
-       concurrency,
-       async (cookie, idx) => checkSingleAccount(cookie, `cookie_${idx + 1}.txt`, idx)
-     );
- 
-     console.log(`Check complete. Results: ${results.length}`);
- 
-     // Calculate stats
-     const stats = {
-       total: results.length,
-       success: results.filter(r => r.status === 'success').length,
-       failed: results.filter(r => r.status === 'failed').length,
-     };
- 
-     return new Response(
-       JSON.stringify({ results, stats }),
-       { 
-         status: 200, 
-         headers: { ...corsHeaders, "Content-Type": "application/json" } 
-       }
-     );
- 
-   } catch (error) {
-     console.error("Error:", error);
-     return new Response(
-       JSON.stringify({ error: String(error) }),
-       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-     );
-   }
- });
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    // Verify Firebase auth token
+    const firebaseToken = req.headers.get("x-firebase-token");
+    let userId: string | null = null;
+    
+    if (firebaseToken) {
+      const tokenData = await verifyFirebaseIdToken(firebaseToken);
+      if (tokenData) {
+        userId = tokenData.uid;
+      }
+    }
+
+    const { cookies, threads = 5, username }: CheckRequest = await req.json();
+
+    // Check if user has service access
+    if (userId) {
+      const userData = await firebaseGet<{ services?: string[]; isAdmin?: boolean }>(`users/${userId}`);
+      const hasAccess = userData?.services?.includes("manus_checker") || 
+                        userData?.services?.includes("all") ||
+                        userData?.isAdmin;
+      
+      if (!hasAccess) {
+        return new Response(
+          JSON.stringify({ error: "You don't have access to this service" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+    console.log(`Starting Manus check for ${cookies.length} cookies, ${threads} threads, user: ${username || 'unknown'}`);
+
+    if (!cookies || cookies.length === 0) {
+      return new Response(
+        JSON.stringify({ error: "Cookies are required" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const concurrency = Math.min(threads, 10);
+    const results = await processWithWorkerPool(
+      cookies,
+      concurrency,
+      async (cookie, idx) => checkSingleAccount(cookie, `cookie_${idx + 1}.txt`, idx)
+    );
+
+    console.log(`Check complete. Results: ${results.length}`);
+
+    // Calculate stats
+    const stats = {
+      total: results.length,
+      success: results.filter(r => r.status === 'success').length,
+      failed: results.filter(r => r.status === 'failed').length,
+    };
+
+    // Save history to Firebase
+    if (userId) {
+      await firebasePush(`checkHistory/${userId}`, {
+        service: "manus_checker",
+        inputCount: cookies.length,
+        stats,
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    return new Response(
+      JSON.stringify({ results, stats }),
+      { 
+        status: 200, 
+        headers: { ...corsHeaders, "Content-Type": "application/json" } 
+      }
+    );
+
+  } catch (error) {
+    console.error("Error:", error);
+    return new Response(
+      JSON.stringify({ error: String(error) }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});
