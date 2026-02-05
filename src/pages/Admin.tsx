@@ -4,13 +4,14 @@ import {
   Shield, Users, Gift, History, Plus, Trash2, 
   ToggleLeft, ToggleRight, Copy, Loader2, ArrowLeft,
   CheckCircle, XCircle, Download, Eye, Search, UserPlus,
-  FileText, Filter
+  FileText, Filter, Bell, Send
 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Background3D } from '@/components/Background3D';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -21,6 +22,7 @@ import { ref, set, get, push, remove, onValue } from 'firebase/database';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { database, auth } from '@/integrations/firebase/config';
 import { toast } from 'sonner';
+import { sendNotification } from '@/components/NotificationBell';
 
 interface RedeemCode {
   id: string;
