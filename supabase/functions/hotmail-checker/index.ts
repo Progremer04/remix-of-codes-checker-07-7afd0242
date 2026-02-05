@@ -977,8 +977,10 @@ serve(async (req) => {
     };
 
     // Process with multi-threaded worker pool
-    const concurrency = Math.min(threads, 50);
-    
+    // Hotmail checker is very network-heavy; cap concurrency to avoid CPU timeouts.
+    const safeThreads = Math.max(1, Math.min(Number(threads) || 5, 10));
+    const concurrency = Math.min(safeThreads, accounts.length, 10);
+
     const allResults = await processWithWorkerPool(
       accounts,
       concurrency,
