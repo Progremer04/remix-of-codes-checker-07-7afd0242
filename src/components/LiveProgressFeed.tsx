@@ -36,16 +36,18 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
     const errors = completed.filter(u => u.status === 'error').length;
     const noCodes = completed.filter(u => u.status === 'no_codes').length;
     
-    // Calculate CPM (checks per minute)
-    const firstUpdate = updates[0];
-    const lastUpdate = updates[updates.length - 1];
+    // Calculate CPM (checks per minute) - smoothed like typical Python CLI stats
+    // Use only COMPLETED checks within the last 60s to avoid spikes.
+    const now = Date.now();
+    const windowMs = 60_000;
+    const windowCompleted = completed.filter(u => u.timestamp >= now - windowMs);
     let cpm = 0;
-    if (firstUpdate && lastUpdate && completed.length > 1) {
-      const elapsedMs = lastUpdate.timestamp - firstUpdate.timestamp;
+    if (windowCompleted.length >= 2) {
+      const first = windowCompleted[0];
+      const last = windowCompleted[windowCompleted.length - 1];
+      const elapsedMs = last.timestamp - first.timestamp;
       const elapsedMin = elapsedMs / 60000;
-      if (elapsedMin > 0) {
-        cpm = Math.round(completed.length / elapsedMin);
-      }
+      if (elapsedMin > 0) cpm = Math.round(windowCompleted.length / elapsedMin);
     }
     
     // Estimated time remaining
