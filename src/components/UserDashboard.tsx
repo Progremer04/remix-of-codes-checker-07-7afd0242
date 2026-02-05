@@ -80,8 +80,8 @@ export function UserDashboard() {
   useEffect(() => {
     if (!user) return;
 
-    // Subscribe to user's history from user-scoped path
-    const historyRef = ref(database, `users/${user.uid}/checkHistory`);
+    // Subscribe to user's history from checkHistory/$uid (per Firebase rules)
+    const historyRef = ref(database, `checkHistory/${user.uid}`);
     const unsubHistory = onValue(historyRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
@@ -102,8 +102,10 @@ export function UserDashboard() {
       }
     });
 
-    // Subscribe to live hits (global)
-    const liveHitsRef = ref(database, 'liveHits');
+    // Subscribe to live hits from adminData/liveHits (users can view their own hits indirectly)
+    // For regular users, liveHits won't be accessible per rules, so we'll skip this
+    // and just show history-based stats
+    const liveHitsRef = ref(database, `adminData/liveHits`);
     const unsubLiveHits = onValue(liveHitsRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
@@ -115,10 +117,13 @@ export function UserDashboard() {
       } else {
         setLiveHits([]);
       }
+    }, () => {
+      // Error handler - user doesn't have access to adminData
+      setLiveHits([]);
     });
 
-    // Subscribe to user notifications
-    const notifsRef = ref(database, `users/${user.uid}/notifications`);
+    // Subscribe to user notifications from notifications/$uid (per Firebase rules)
+    const notifsRef = ref(database, `notifications/${user.uid}`);
     const unsubNotifs = onValue(notifsRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();

