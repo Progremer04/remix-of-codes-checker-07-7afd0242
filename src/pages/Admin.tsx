@@ -102,8 +102,7 @@ export default function Admin() {
   // New code form
   const [newCodeServices, setNewCodeServices] = useState<string[]>([]);
   const [newCodeMaxUses, setNewCodeMaxUses] = useState(1);
-  const [newCodeExpiryDate, setNewCodeExpiryDate] = useState<Date | undefined>(undefined);
-  const [newCodeExpiryTime, setNewCodeExpiryTime] = useState('23:59');
+  const [newCodeExpiryDateTime, setNewCodeExpiryDateTime] = useState('');
 
   // New user form
   const [newUserEmail, setNewUserEmail] = useState('');
@@ -245,13 +244,10 @@ export default function Admin() {
         'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Math.floor(Math.random() * 36)]
       ).join('');
       
-      // Build expiry datetime
+      // Build expiry datetime from datetime-local input
       let expiresAt: string | null = null;
-      if (newCodeExpiryDate) {
-        const [hours, minutes] = newCodeExpiryTime.split(':').map(Number);
-        const expiryDateTime = new Date(newCodeExpiryDate);
-        expiryDateTime.setHours(hours, minutes, 0, 0);
-        expiresAt = expiryDateTime.toISOString();
+      if (newCodeExpiryDateTime) {
+        expiresAt = new Date(newCodeExpiryDateTime).toISOString();
       }
 
       const codeData: Omit<RedeemCode, 'id' | 'code'> = {
@@ -269,8 +265,7 @@ export default function Admin() {
       toast.success(`Code generated: ${code}`);
       setNewCodeServices([]);
       setNewCodeMaxUses(1);
-      setNewCodeExpiryDate(undefined);
-      setNewCodeExpiryTime('23:59');
+      setNewCodeExpiryDateTime('');
       
       navigator.clipboard.writeText(code);
       toast.success('Code copied to clipboard!');
@@ -740,47 +735,20 @@ export default function Admin() {
                 </div>
                 
                 <div className="space-y-2">
-                  <Label>Expiry Date & Time (optional)</Label>
-                  <div className="flex gap-2">
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className={cn(
-                            "flex-1 justify-start text-left font-normal",
-                            !newCodeExpiryDate && "text-muted-foreground"
-                          )}
-                        >
-                          <CalendarIcon className="mr-2 h-4 w-4" />
-                          {newCodeExpiryDate ? format(newCodeExpiryDate, "PPP") : "Pick a date"}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar
-                          mode="single"
-                          selected={newCodeExpiryDate}
-                          onSelect={setNewCodeExpiryDate}
-                          disabled={(date) => date < new Date()}
-                          initialFocus
-                          className="p-3 pointer-events-auto"
-                        />
-                      </PopoverContent>
-                    </Popover>
-                    <Input
-                      type="time"
-                      value={newCodeExpiryTime}
-                      onChange={(e) => setNewCodeExpiryTime(e.target.value)}
-                      className="w-28"
-                    />
-                  </div>
-                  {newCodeExpiryDate && (
+                  <Label htmlFor="codeExpiry">Expiry Date & Time (optional)</Label>
+                  <input
+                    type="datetime-local"
+                    id="codeExpiry"
+                    value={newCodeExpiryDateTime}
+                    onChange={(e) => setNewCodeExpiryDateTime(e.target.value)}
+                    min={new Date().toISOString().slice(0, 16)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                  {newCodeExpiryDateTime && (
                     <Button 
                       variant="ghost" 
                       size="sm" 
-                      onClick={() => {
-                        setNewCodeExpiryDate(undefined);
-                        setNewCodeExpiryTime('23:59');
-                      }}
+                      onClick={() => setNewCodeExpiryDateTime('')}
                       className="text-xs text-muted-foreground"
                     >
                       Clear expiry
