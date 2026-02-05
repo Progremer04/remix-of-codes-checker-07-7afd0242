@@ -1,9 +1,10 @@
- import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
- 
- const corsHeaders = {
-   "Access-Control-Allow-Origin": "*",
-   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
- };
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { firebasePush, firebaseGet, verifyFirebaseIdToken } from "../_shared/firebase-admin.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token",
+};
  
  const MICROSOFT_OAUTH_URL = 'https://login.live.com/oauth20_authorize.srf?client_id=00000000402B5328&redirect_uri=https://login.live.com/oauth20_desktop.srf&scope=service::user.auth.xboxlive.com::MBI_SSL&display=touch&response_type=token&locale=en';
  
@@ -404,70 +405,106 @@
    return results;
  }
  
- serve(async (req) => {
-   if (req.method === "OPTIONS") {
-     return new Response(null, { headers: corsHeaders });
-   }
- 
-   try {
-     const { accounts, threads = 5, username }: FetchRequest = await req.json();
- 
-     console.log(`Starting Xbox fetch for ${accounts.length} accounts, ${threads} threads, user: ${username || 'unknown'}`);
- 
-     if (!accounts || accounts.length === 0) {
-       return new Response(
-         JSON.stringify({ error: "Accounts are required (email:password format)" }),
-         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-       );
-     }
- 
-     // Parse accounts
-     const parsedAccounts = accounts.map(acc => {
-       const parts = acc.split(':');
-       return { email: parts[0]?.trim() || '', password: parts.slice(1).join(':').trim() };
-     }).filter(acc => acc.email && acc.password);
- 
-     if (parsedAccounts.length === 0) {
-       return new Response(
-         JSON.stringify({ error: "No valid accounts found. Use email:password format" }),
-         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-       );
-     }
- 
-     const concurrency = Math.min(threads, 20);
-     const results = await processWithWorkerPool(
-       parsedAccounts,
-       concurrency,
-       async (acc, idx) => fetchAccountWorker(acc.email, acc.password, idx + 1, parsedAccounts.length)
-     );
- 
-     console.log(`Fetch complete. Results: ${results.length}`);
- 
-     // Calculate stats
-     const stats = {
-       total: results.length,
-       success: results.filter(r => r.status === 'success').length,
-       noCodes: results.filter(r => r.status === 'no_codes').length,
-       authFailed: results.filter(r => r.status === 'auth_failed').length,
-       loginFailed: results.filter(r => r.status === 'login_failed').length,
-       xboxFailed: results.filter(r => r.status === 'xbox_tokens_failed').length,
-       error: results.filter(r => r.status === 'error').length,
-       totalCodes: results.reduce((sum, r) => sum + r.codes.length, 0),
-     };
- 
-     return new Response(
-       JSON.stringify({ results, stats }),
-       { 
-         status: 200, 
-         headers: { ...corsHeaders, "Content-Type": "application/json" } 
-       }
-     );
- 
-   } catch (error) {
-     console.error("Error:", error);
-     return new Response(
-       JSON.stringify({ error: String(error) }),
-       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-     );
-   }
- });
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    // Verify Firebase auth token
+    const firebaseToken = req.headers.get("x-firebase-token");
+    let userId: string | null = null;
+    
+    if (firebaseToken) {
+      const tokenData = await verifyFirebaseIdToken(firebaseToken);
+      if (tokenData) {
+        userId = tokenData.uid;
+      }
+    }
+
+    const { accounts, threads = 5, username }: FetchRequest = await req.json();
+
+    // Check if user has service access
+    if (userId) {
+      const userData = await firebaseGet<{ services?: string[]; isAdmin?: boolean }>(`users/${userId}`);
+      const hasAccess = userData?.services?.includes("xbox_fetcher") || 
+                        userData?.services?.includes("all") ||
+                        userData?.isAdmin;
+      
+      if (!hasAccess) {
+        return new Response(
+          JSON.stringify({ error: "You don't have access to this service" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+    console.log(`Starting Xbox fetch for ${accounts.length} accounts, ${threads} threads, user: ${username || 'unknown'}`);
+
+    if (!accounts || accounts.length === 0) {
+      return new Response(
+        JSON.stringify({ error: "Accounts are required (email:password format)" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Parse accounts
+    const parsedAccounts = accounts.map(acc => {
+      const parts = acc.split(':');
+      return { email: parts[0]?.trim() || '', password: parts.slice(1).join(':').trim() };
+    }).filter(acc => acc.email && acc.password);
+
+    if (parsedAccounts.length === 0) {
+      return new Response(
+        JSON.stringify({ error: "No valid accounts found. Use email:password format" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const concurrency = Math.min(threads, 20);
+    const results = await processWithWorkerPool(
+      parsedAccounts,
+      concurrency,
+      async (acc, idx) => fetchAccountWorker(acc.email, acc.password, idx + 1, parsedAccounts.length)
+    );
+
+    console.log(`Fetch complete. Results: ${results.length}`);
+
+    // Calculate stats
+    const stats = {
+      total: results.length,
+      success: results.filter(r => r.status === 'success').length,
+      noCodes: results.filter(r => r.status === 'no_codes').length,
+      authFailed: results.filter(r => r.status === 'auth_failed').length,
+      loginFailed: results.filter(r => r.status === 'login_failed').length,
+      xboxFailed: results.filter(r => r.status === 'xbox_tokens_failed').length,
+      error: results.filter(r => r.status === 'error').length,
+      totalCodes: results.reduce((sum, r) => sum + r.codes.length, 0),
+    };
+
+    // Save history to Firebase
+    if (userId) {
+      await firebasePush(`checkHistory/${userId}`, {
+        service: "xbox_fetcher",
+        inputCount: accounts.length,
+        stats,
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    return new Response(
+      JSON.stringify({ results, stats }),
+      { 
+        status: 200, 
+        headers: { ...corsHeaders, "Content-Type": "application/json" } 
+      }
+    );
+
+  } catch (error) {
+    console.error("Error:", error);
+    return new Response(
+      JSON.stringify({ error: String(error) }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});

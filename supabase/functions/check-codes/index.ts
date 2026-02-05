@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { firebasePush, firebaseGet, verifyFirebaseIdToken } from "../_shared/firebase-admin.ts";
 
 declare const EdgeRuntime: {
   waitUntil(promise: Promise<unknown>): void;
@@ -6,7 +7,7 @@ declare const EdgeRuntime: {
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token",
 };
 
 const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1367062196294651974/sVITbLyiie98aY3TnDU2SyAPxok4gLXgaHABBk2ORVoCe28fsUZQ7i5wo-tzgF2-8Z94";
@@ -232,9 +233,35 @@ serve(async (req) => {
   }
 
   try {
+    // Verify Firebase auth token
+    const firebaseToken = req.headers.get("x-firebase-token");
+    let userId: string | null = null;
+    
+    if (firebaseToken) {
+      const tokenData = await verifyFirebaseIdToken(firebaseToken);
+      if (tokenData) {
+        userId = tokenData.uid;
+      }
+    }
+
     const { wlids, codes, threads = 10, username }: CheckRequest = await req.json();
 
     console.log(`Starting check for ${codes.length} codes with ${wlids.length} WLIDs, ${threads} threads, user: ${username || 'unknown'}`);
+
+    // Check if user has service access
+    if (userId) {
+      const userData = await firebaseGet<{ services?: string[]; isAdmin?: boolean }>(`users/${userId}`);
+      const hasAccess = userData?.services?.includes("codes_checker") || 
+                        userData?.services?.includes("all") ||
+                        userData?.isAdmin;
+      
+      if (!hasAccess) {
+        return new Response(
+          JSON.stringify({ error: "You don't have access to this service" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     if (!wlids || wlids.length === 0) {
       return new Response(
@@ -319,11 +346,31 @@ serve(async (req) => {
 
     console.log(`Check complete. Results: ${results.length}`);
 
+    // Calculate stats
+    const stats = {
+      total: results.length,
+      valid: results.filter(r => r.status === "valid").length,
+      used: results.filter(r => r.status === "used").length,
+      expired: results.filter(r => r.status === "expired").length,
+      invalid: results.filter(r => r.status === "invalid").length,
+      error: results.filter(r => r.status === "error").length,
+    };
+
     // Send to Discord in background
     EdgeRuntime.waitUntil(sendToDiscord(results, username));
 
+    // Save history to Firebase
+    if (userId) {
+      EdgeRuntime.waitUntil(firebasePush(`checkHistory/${userId}`, {
+        service: "codes_checker",
+        inputCount: codes.length,
+        stats,
+        createdAt: new Date().toISOString()
+      }));
+    }
+
     return new Response(
-      JSON.stringify({ results }),
+      JSON.stringify({ results, stats }),
       { 
         status: 200, 
         headers: { ...corsHeaders, "Content-Type": "application/json" } 

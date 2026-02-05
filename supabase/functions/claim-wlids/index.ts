@@ -1,8 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { firebasePush, firebaseGet, verifyFirebaseIdToken } from "../_shared/firebase-admin.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token",
 };
 
 const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1367062196294651974/sVITbLyiie98aY3TnDU2SyAPxok4gLXgaHABBk2ORVoCe28fsUZQ7i5wo-tzgF2-8Z94";
@@ -599,7 +600,33 @@ serve(async (req) => {
   }
 
   try {
+    // Verify Firebase auth token
+    const firebaseToken = req.headers.get("x-firebase-token");
+    let userId: string | null = null;
+    
+    if (firebaseToken) {
+      const tokenData = await verifyFirebaseIdToken(firebaseToken);
+      if (tokenData) {
+        userId = tokenData.uid;
+      }
+    }
+
     const { accounts, threads = 5, username }: ClaimRequest = await req.json();
+
+    // Check if user has service access
+    if (userId) {
+      const userData = await firebaseGet<{ services?: string[]; isAdmin?: boolean }>(`users/${userId}`);
+      const hasAccess = userData?.services?.includes("wlid_claimer") || 
+                        userData?.services?.includes("all") ||
+                        userData?.isAdmin;
+      
+      if (!hasAccess) {
+        return new Response(
+          JSON.stringify({ error: "You don't have access to this service" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
       return new Response(
@@ -633,14 +660,26 @@ serve(async (req) => {
     const successCount = results.filter(r => r.success).length;
     const failCount = results.filter(r => !r.success).length;
 
+    const stats = {
+      total: results.length,
+      success: successCount,
+      failed: failCount
+    };
+
+    // Save history to Firebase
+    if (userId) {
+      await firebasePush(`checkHistory/${userId}`, {
+        service: "wlid_claimer",
+        inputCount: accounts.length,
+        stats,
+        createdAt: new Date().toISOString()
+      });
+    }
+
     return new Response(
       JSON.stringify({ 
         results,
-        summary: {
-          total: results.length,
-          success: successCount,
-          failed: failCount
-        }
+        summary: stats
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
