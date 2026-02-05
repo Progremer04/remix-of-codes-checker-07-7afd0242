@@ -6,6 +6,7 @@ export interface ProgressUpdate {
   index: number;
   total: number;
   email: string;
+  password?: string;
   status: 'checking' | 'success' | 'failed' | 'no_codes' | 'valid' | 'invalid' | '2fa' | 'locked' | 'error';
   message: string;
   timestamp: number;
