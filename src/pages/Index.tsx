@@ -1,40 +1,79 @@
-import { useState, useMemo, useEffect } from 'react';
-import { Key, Code, Play, Loader2, CheckCircle, XCircle, Clock, AlertTriangle, RotateCcw, Users, Settings2, Hash } from 'lucide-react';
-import { Header } from '@/components/Header';
-import { CodeInput } from '@/components/CodeInput';
-import { ResultCard } from '@/components/ResultCard';
-import { StatsCard } from '@/components/StatsCard';
-import { ProgressBar } from '@/components/ProgressBar';
-import { Background3D } from '@/components/Background3D';
-import { UsernameModal } from '@/components/UsernameModal';
-import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { CheckResult } from '@/types/checker';
-import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
+ import { useState, useMemo, useEffect } from 'react';
+ import { useNavigate } from 'react-router-dom';
+ import { 
+   Key, Code, Play, Loader2, CheckCircle, XCircle, Clock, 
+   AlertTriangle, RotateCcw, Users, Settings2, Gamepad2, 
+   Cookie, Shield, Gift, LogIn
+ } from 'lucide-react';
+ import { Header } from '@/components/Header';
+ import { CodeInput } from '@/components/CodeInput';
+ import { ResultCard } from '@/components/ResultCard';
+ import { StatsCard } from '@/components/StatsCard';
+ import { ProgressBar } from '@/components/ProgressBar';
+ import { Background3D } from '@/components/Background3D';
+ import { UsernameModal } from '@/components/UsernameModal';
+ import { Button } from '@/components/ui/button';
+ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+ import { Input } from '@/components/ui/input';
+ import { Label } from '@/components/ui/label';
+ import { CheckResult } from '@/types/checker';
+ import { toast } from 'sonner';
+ import { supabase } from '@/integrations/supabase/client';
+ import { useAuth } from '@/hooks/useAuth';
 
-interface ClaimResult {
-  email: string;
-  success: boolean;
-  token?: string;
-  error?: string;
-}
+ interface ClaimResult {
+   email: string;
+   success: boolean;
+   token?: string;
+   error?: string;
+ }
+ 
+ interface XboxFetchResult {
+   email: string;
+   status: string;
+   codes: string[];
+   message: string;
+ }
+ 
+ interface ManusCheckResult {
+   id: string;
+   filename: string;
+   status: string;
+   email: string;
+   name: string;
+   membership: string;
+   totalCredits: string;
+   freeCredits: string;
+   error?: string;
+ }
 
 export default function Index() {
+   const navigate = useNavigate();
+   const { user, isAdmin, isLoading: authLoading, userServices, signOut, redeemCode } = useAuth();
+ 
   // Username State
   const [username, setUsername] = useState<string | null>(null);
   const [isLoadingUsername, setIsLoadingUsername] = useState(true);
+ 
+   // Redeem code state
+   const [redeemCodeInput, setRedeemCodeInput] = useState('');
+   const [isRedeeming, setIsRedeeming] = useState(false);
 
   // Check for saved username on mount
   useEffect(() => {
-    const savedUsername = localStorage.getItem('checker_username');
-    if (savedUsername) {
-      setUsername(savedUsername);
+     if (!authLoading) {
+       if (user) {
+         // Use email or user id as username if logged in
+         setUsername(user.email || user.id);
+       } else {
+         const savedUsername = localStorage.getItem('checker_username');
+         if (savedUsername) {
+           setUsername(savedUsername);
+         }
+       }
+       setIsLoadingUsername(false);
     }
-    setIsLoadingUsername(false);
-  }, []);
+   }, [authLoading, user]);
 
   // Codes Checker State
   const [wlids, setWlids] = useState('');
@@ -52,6 +91,22 @@ export default function Index() {
   const [claimStatus, setClaimStatus] = useState('');
   const [claimResults, setClaimResults] = useState<ClaimResult[]>([]);
   const [claimThreads, setClaimThreads] = useState(10);
+ 
+   // Xbox Fetcher State
+   const [xboxAccounts, setXboxAccounts] = useState('');
+   const [isXboxFetching, setIsXboxFetching] = useState(false);
+   const [xboxProgress, setXboxProgress] = useState(0);
+   const [xboxStatus, setXboxStatus] = useState('');
+   const [xboxResults, setXboxResults] = useState<XboxFetchResult[]>([]);
+   const [xboxThreads, setXboxThreads] = useState(5);
+ 
+   // Manus Checker State
+   const [manusCookies, setManusCookies] = useState('');
+   const [isManusChecking, setIsManusChecking] = useState(false);
+   const [manusProgress, setManusProgress] = useState(0);
+   const [manusStatus, setManusStatus] = useState('');
+   const [manusResults, setManusResults] = useState<ManusCheckResult[]>([]);
+   const [manusThreads, setManusThreads] = useState(5);
 
   // Codes Checker computed values
   const codesList = useMemo(() => 
@@ -113,6 +168,43 @@ export default function Index() {
     claimResults.filter(r => !r.success).map(r => `${r.email}: ${r.error || 'Unknown error'}`),
     [claimResults]
   );
+ 
+   // Xbox Fetcher computed values
+   const xboxAccountsList = useMemo(() => 
+     xboxAccounts.split('\n').map(a => a.trim()).filter(a => a.includes(':')),
+     [xboxAccounts]
+   );
+ 
+   const xboxStats = useMemo(() => ({
+     success: xboxResults.filter(r => r.status === 'success').length,
+     noCodes: xboxResults.filter(r => r.status === 'no_codes').length,
+     failed: xboxResults.filter(r => !['success', 'no_codes'].includes(r.status)).length,
+     totalCodes: xboxResults.reduce((sum, r) => sum + r.codes.length, 0),
+     total: xboxResults.length,
+   }), [xboxResults]);
+ 
+   const allXboxCodes = useMemo(() => 
+     xboxResults.flatMap(r => r.codes),
+     [xboxResults]
+   );
+ 
+   // Manus Checker computed values  
+   const manusCookiesList = useMemo(() => 
+     manusCookies.split('---').map(c => c.trim()).filter(c => c.length > 0),
+     [manusCookies]
+   );
+ 
+   const manusStats = useMemo(() => ({
+     success: manusResults.filter(r => r.status === 'success').length,
+     failed: manusResults.filter(r => r.status === 'failed').length,
+     total: manusResults.length,
+   }), [manusResults]);
+ 
+   // Check service access
+   const hasServiceAccess = (service: string) => {
+     if (isAdmin) return true;
+     return userServices.includes(service);
+   };
 
   // Codes Checker functions
   const checkCodes = async () => {
@@ -316,9 +408,142 @@ export default function Index() {
     setClaimProgress(0);
     setClaimStatus('');
   };
+ 
+   // Xbox Fetcher functions
+   const fetchXboxCodes = async () => {
+     if (!hasServiceAccess('xbox_fetcher')) {
+       toast.error('You need to redeem a code to access Xbox Fetcher');
+       return;
+     }
+     
+     if (xboxAccountsList.length === 0) {
+       toast.error('Please enter accounts (email:password format)');
+       return;
+     }
+ 
+     setIsXboxFetching(true);
+     setXboxResults([]);
+     setXboxProgress(0);
+     setXboxStatus('Connecting to server...');
+ 
+     try {
+       const { data, error } = await supabase.functions.invoke('xbox-fetcher', {
+         body: { accounts: xboxAccountsList, threads: xboxThreads, username }
+       });
+ 
+       if (error) {
+         console.error('Edge function error:', error);
+         toast.error('Server connection error');
+         setIsXboxFetching(false);
+         return;
+       }
+ 
+       if (data.error) {
+         toast.error(data.error);
+         setIsXboxFetching(false);
+         return;
+       }
+ 
+       setXboxResults(data.results);
+       setXboxProgress(xboxAccountsList.length);
+       setXboxStatus('Complete!');
+       toast.success(`Found ${data.stats?.totalCodes || 0} codes from ${data.stats?.success || 0} accounts`);
+ 
+     } catch (err) {
+       console.error('Error:', err);
+       toast.error('An unexpected error occurred');
+     } finally {
+       setIsXboxFetching(false);
+     }
+   };
+ 
+   const handleXboxReset = () => {
+     setXboxResults([]);
+     setXboxProgress(0);
+     setXboxStatus('');
+   };
+ 
+   // Manus Checker functions
+   const checkManusCookies = async () => {
+     if (!hasServiceAccess('manus_checker')) {
+       toast.error('You need to redeem a code to access Manus Checker');
+       return;
+     }
+     
+     if (manusCookiesList.length === 0) {
+       toast.error('Please enter cookies (separated by ---)');
+       return;
+     }
+ 
+     setIsManusChecking(true);
+     setManusResults([]);
+     setManusProgress(0);
+     setManusStatus('Connecting to server...');
+ 
+     try {
+       const { data, error } = await supabase.functions.invoke('manus-checker', {
+         body: { cookies: manusCookiesList, threads: manusThreads, username }
+       });
+ 
+       if (error) {
+         console.error('Edge function error:', error);
+         toast.error('Server connection error');
+         setIsManusChecking(false);
+         return;
+       }
+ 
+       if (data.error) {
+         toast.error(data.error);
+         setIsManusChecking(false);
+         return;
+       }
+ 
+       setManusResults(data.results);
+       setManusProgress(manusCookiesList.length);
+       setManusStatus('Complete!');
+       toast.success(`Checked ${data.stats?.total || 0} accounts, ${data.stats?.success || 0} valid`);
+ 
+     } catch (err) {
+       console.error('Error:', err);
+       toast.error('An unexpected error occurred');
+     } finally {
+       setIsManusChecking(false);
+     }
+   };
+ 
+   const handleManusReset = () => {
+     setManusResults([]);
+     setManusProgress(0);
+     setManusStatus('');
+   };
+ 
+   // Redeem code handler
+   const handleRedeemCode = async () => {
+     if (!user) {
+       toast.error('Please sign in to redeem codes');
+       navigate('/auth');
+       return;
+     }
+     
+     if (!redeemCodeInput.trim()) {
+       toast.error('Please enter a code');
+       return;
+     }
+     
+     setIsRedeeming(true);
+     const { error, services } = await redeemCode(redeemCodeInput);
+     
+     if (error) {
+       toast.error(error);
+     } else {
+       toast.success(`Code redeemed! Access granted to: ${services?.join(', ')}`);
+       setRedeemCodeInput('');
+     }
+     setIsRedeeming(false);
+   };
 
   // Show loading state
-  if (isLoadingUsername) {
+   if (isLoadingUsername || authLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -331,7 +556,10 @@ export default function Index() {
     return (
       <>
         <Background3D />
-        <UsernameModal onSubmit={setUsername} />
+         <UsernameModal onSubmit={(name) => {
+           localStorage.setItem('checker_username', name);
+           setUsername(name);
+         }} />
       </>
     );
   }
@@ -339,19 +567,84 @@ export default function Index() {
   return (
     <div className="min-h-screen bg-background flex flex-col relative">
       <Background3D />
-      <Header username={username} onLogout={() => { localStorage.removeItem('checker_username'); setUsername(null); }} />
+       <Header 
+         username={username} 
+         onLogout={() => { 
+           localStorage.removeItem('checker_username'); 
+           setUsername(null); 
+           if (user) signOut();
+         }} 
+       />
       
       <main className="flex-1 container mx-auto px-4 py-8 space-y-8 relative z-10">
+         {/* Quick Actions Bar */}
+         <div className="flex flex-wrap items-center justify-center gap-3 mb-4">
+           {user ? (
+             <>
+               {isAdmin && (
+                 <Button 
+                   variant="outline" 
+                   size="sm" 
+                   onClick={() => navigate('/admin')}
+                   className="shadow-3d"
+                 >
+                   <Shield className="w-4 h-4 mr-2" />
+                   Admin Panel
+                 </Button>
+               )}
+             </>
+           ) : (
+             <Button 
+               variant="outline" 
+               size="sm" 
+               onClick={() => navigate('/auth')}
+               className="shadow-3d"
+             >
+               <LogIn className="w-4 h-4 mr-2" />
+               Sign In
+             </Button>
+           )}
+           
+           {/* Redeem Code */}
+           <div className="flex items-center gap-2 glass-card px-3 py-1.5 rounded-lg">
+             <Gift className="w-4 h-4 text-primary" />
+             <Input
+               type="text"
+               placeholder="Redeem Code"
+               value={redeemCodeInput}
+               onChange={(e) => setRedeemCodeInput(e.target.value.toUpperCase())}
+               className="w-32 h-7 text-xs"
+             />
+             <Button 
+               size="sm" 
+               variant="secondary" 
+               className="h-7 px-2"
+               onClick={handleRedeemCode}
+               disabled={isRedeeming}
+             >
+               {isRedeeming ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Redeem'}
+             </Button>
+           </div>
+         </div>
+ 
         <Tabs defaultValue="checker" className="w-full">
-          <TabsList className="grid w-full max-w-md mx-auto grid-cols-2 glass-card mb-8">
+           <TabsList className="grid w-full max-w-2xl mx-auto grid-cols-4 glass-card mb-8">
             <TabsTrigger value="checker" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Code className="w-4 h-4 mr-2" />
-              Codes Checker
+               Codes
             </TabsTrigger>
             <TabsTrigger value="claimer" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Users className="w-4 h-4 mr-2" />
-              WLID Claimer
+               WLID
             </TabsTrigger>
+             <TabsTrigger value="xbox" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+               <Gamepad2 className="w-4 h-4 mr-2" />
+               Xbox
+             </TabsTrigger>
+             <TabsTrigger value="manus" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+               <Cookie className="w-4 h-4 mr-2" />
+               Manus
+             </TabsTrigger>
           </TabsList>
 
           {/* Codes Checker Tab */}
@@ -606,6 +899,267 @@ export default function Index() {
               </div>
             )}
           </TabsContent>
+           {/* Xbox Fetcher Tab */}
+           <TabsContent value="xbox" className="space-y-8">
+             {!hasServiceAccess('xbox_fetcher') && (
+               <div className="text-center p-8 glass-card rounded-xl">
+                 <Gamepad2 className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                 <h3 className="text-lg font-semibold mb-2">Xbox Fetcher Locked</h3>
+                 <p className="text-muted-foreground mb-4">Redeem a code to access this feature</p>
+               </div>
+             )}
+             
+             {hasServiceAccess('xbox_fetcher') && (
+               <>
+                 {/* Input Section */}
+                 <div className="max-w-2xl mx-auto">
+                   <CodeInput
+                     label="Xbox Accounts"
+                     placeholder="Enter accounts in email:password format, one per line..."
+                     value={xboxAccounts}
+                     onChange={setXboxAccounts}
+                     icon={<Gamepad2 className="w-4 h-4 text-primary" />}
+                   />
+                 </div>
+ 
+                 {/* Threads Control */}
+                 <div className="flex items-center justify-center gap-4">
+                   <div className="flex items-center gap-2 glass-card p-3 rounded-lg">
+                     <Settings2 className="w-4 h-4 text-primary" />
+                     <Label htmlFor="xboxThreads" className="text-sm">Threads:</Label>
+                     <Input
+                       id="xboxThreads"
+                       type="number"
+                       min={1}
+                       max={20}
+                       value={xboxThreads}
+                       onChange={(e) => setXboxThreads(Math.max(1, Math.min(20, parseInt(e.target.value) || 5)))}
+                       className="w-20 h-8 text-center"
+                     />
+                   </div>
+                 </div>
+ 
+                 {/* Action Buttons */}
+                 <div className="flex items-center gap-4 justify-center">
+                   <Button
+                     onClick={fetchXboxCodes}
+                     disabled={isXboxFetching || xboxAccountsList.length === 0}
+                     size="lg"
+                     className="min-w-[220px] gradient-primary text-primary-foreground font-semibold shadow-3d hover:shadow-glow transition-all duration-300 hover:scale-105"
+                   >
+                     {isXboxFetching ? (
+                       <>
+                         <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                         Fetching...
+                       </>
+                     ) : (
+                       <>
+                         <Play className="w-5 h-5 mr-2" />
+                         Fetch Codes ({xboxAccountsList.length} accounts)
+                       </>
+                     )}
+                   </Button>
+                   
+                   {xboxResults.length > 0 && !isXboxFetching && (
+                     <Button 
+                       variant="outline" 
+                       onClick={handleXboxReset}
+                       className="shadow-3d hover:shadow-glow transition-all"
+                     >
+                       <RotateCcw className="w-4 h-4 mr-2" />
+                       Reset
+                     </Button>
+                   )}
+                 </div>
+ 
+                 {/* Progress */}
+                 {(isXboxFetching || xboxProgress > 0) && (
+                   <div className="max-w-2xl mx-auto">
+                     <ProgressBar
+                       current={xboxProgress}
+                       total={xboxAccountsList.length}
+                       status={xboxStatus}
+                     />
+                   </div>
+                 )}
+ 
+                 {/* Stats */}
+                 {xboxResults.length > 0 && (
+                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                     <StatsCard
+                       label="Success"
+                       value={xboxStats.success}
+                       icon={<CheckCircle className="w-5 h-5" />}
+                       colorClass="text-success"
+                     />
+                     <StatsCard
+                       label="No Codes"
+                       value={xboxStats.noCodes}
+                       icon={<AlertTriangle className="w-5 h-5" />}
+                       colorClass="text-warning"
+                     />
+                     <StatsCard
+                       label="Failed"
+                       value={xboxStats.failed}
+                       icon={<XCircle className="w-5 h-5" />}
+                       colorClass="text-destructive"
+                     />
+                     <StatsCard
+                       label="Total Codes"
+                       value={xboxStats.totalCodes}
+                       icon={<Gamepad2 className="w-5 h-5" />}
+                       colorClass="text-primary"
+                     />
+                   </div>
+                 )}
+ 
+                 {/* Results */}
+                 {xboxResults.length > 0 && (
+                   <div className="grid lg:grid-cols-2 gap-4">
+                     <ResultCard
+                       title="Fetched Codes"
+                       icon={<Gamepad2 className="w-5 h-5" />}
+                       items={allXboxCodes}
+                       colorClass="text-success"
+                     />
+                     <ResultCard
+                       title="Failed Accounts"
+                       icon={<XCircle className="w-5 h-5" />}
+                       items={xboxResults.filter(r => !['success', 'no_codes'].includes(r.status)).map(r => r.message)}
+                       colorClass="text-destructive"
+                     />
+                   </div>
+                 )}
+               </>
+             )}
+           </TabsContent>
+ 
+           {/* Manus Checker Tab */}
+           <TabsContent value="manus" className="space-y-8">
+             {!hasServiceAccess('manus_checker') && (
+               <div className="text-center p-8 glass-card rounded-xl">
+                 <Cookie className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                 <h3 className="text-lg font-semibold mb-2">Manus Checker Locked</h3>
+                 <p className="text-muted-foreground mb-4">Redeem a code to access this feature</p>
+               </div>
+             )}
+             
+             {hasServiceAccess('manus_checker') && (
+               <>
+                 {/* Input Section */}
+                 <div className="max-w-2xl mx-auto">
+                   <CodeInput
+                     label="Manus Cookies"
+                     placeholder="Paste cookies here, separate multiple accounts with ---"
+                     value={manusCookies}
+                     onChange={setManusCookies}
+                     icon={<Cookie className="w-4 h-4 text-primary" />}
+                   />
+                 </div>
+ 
+                 {/* Threads Control */}
+                 <div className="flex items-center justify-center gap-4">
+                   <div className="flex items-center gap-2 glass-card p-3 rounded-lg">
+                     <Settings2 className="w-4 h-4 text-primary" />
+                     <Label htmlFor="manusThreads" className="text-sm">Threads:</Label>
+                     <Input
+                       id="manusThreads"
+                       type="number"
+                       min={1}
+                       max={10}
+                       value={manusThreads}
+                       onChange={(e) => setManusThreads(Math.max(1, Math.min(10, parseInt(e.target.value) || 5)))}
+                       className="w-20 h-8 text-center"
+                     />
+                   </div>
+                 </div>
+ 
+                 {/* Action Buttons */}
+                 <div className="flex items-center gap-4 justify-center">
+                   <Button
+                     onClick={checkManusCookies}
+                     disabled={isManusChecking || manusCookiesList.length === 0}
+                     size="lg"
+                     className="min-w-[220px] gradient-primary text-primary-foreground font-semibold shadow-3d hover:shadow-glow transition-all duration-300 hover:scale-105"
+                   >
+                     {isManusChecking ? (
+                       <>
+                         <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                         Checking...
+                       </>
+                     ) : (
+                       <>
+                         <Play className="w-5 h-5 mr-2" />
+                         Check Cookies ({manusCookiesList.length})
+                       </>
+                     )}
+                   </Button>
+                   
+                   {manusResults.length > 0 && !isManusChecking && (
+                     <Button 
+                       variant="outline" 
+                       onClick={handleManusReset}
+                       className="shadow-3d hover:shadow-glow transition-all"
+                     >
+                       <RotateCcw className="w-4 h-4 mr-2" />
+                       Reset
+                     </Button>
+                   )}
+                 </div>
+ 
+                 {/* Progress */}
+                 {(isManusChecking || manusProgress > 0) && (
+                   <div className="max-w-2xl mx-auto">
+                     <ProgressBar
+                       current={manusProgress}
+                       total={manusCookiesList.length}
+                       status={manusStatus}
+                     />
+                   </div>
+                 )}
+ 
+                 {/* Stats */}
+                 {manusResults.length > 0 && (
+                   <div className="grid grid-cols-2 gap-4 max-w-md mx-auto">
+                     <StatsCard
+                       label="Valid"
+                       value={manusStats.success}
+                       icon={<CheckCircle className="w-5 h-5" />}
+                       colorClass="text-success"
+                     />
+                     <StatsCard
+                       label="Invalid"
+                       value={manusStats.failed}
+                       icon={<XCircle className="w-5 h-5" />}
+                       colorClass="text-destructive"
+                     />
+                   </div>
+                 )}
+ 
+                 {/* Results */}
+                 {manusResults.length > 0 && (
+                   <div className="grid lg:grid-cols-2 gap-4">
+                     <ResultCard
+                       title="Valid Accounts"
+                       icon={<CheckCircle className="w-5 h-5" />}
+                       items={manusResults.filter(r => r.status === 'success').map(r => 
+                         `${r.email} | ${r.membership} | Credits: ${r.totalCredits}`
+                       )}
+                       colorClass="text-success"
+                     />
+                     <ResultCard
+                       title="Invalid Accounts"
+                       icon={<XCircle className="w-5 h-5" />}
+                       items={manusResults.filter(r => r.status === 'failed').map(r => 
+                         `${r.filename}: ${r.error || 'Unknown error'}`
+                       )}
+                       colorClass="text-destructive"
+                     />
+                   </div>
+                 )}
+               </>
+             )}
+           </TabsContent>
         </Tabs>
       </main>
     </div>
