@@ -181,23 +181,22 @@ export default function Admin() {
       }
     });
 
-    // Subscribe to history - now reads from user-scoped paths
-    const usersHistoryRef = ref(database, 'users');
-    onValue(usersHistoryRef, (snapshot) => {
+    // Subscribe to history - reads from checkHistory/$uid paths (per Firebase rules)
+    const checkHistoryRef = ref(database, 'checkHistory');
+    onValue(checkHistoryRef, (snapshot) => {
       if (snapshot.exists()) {
         const usersData = snapshot.val();
         const historyList: CheckHistoryItem[] = [];
         
-        for (const [userId, userData] of Object.entries(usersData)) {
-          const userCheckHistory = (userData as any).checkHistory;
-          if (userCheckHistory) {
-            for (const [historyId, item] of Object.entries(userCheckHistory)) {
+        for (const [userId, userHistory] of Object.entries(usersData)) {
+          if (userHistory && typeof userHistory === 'object') {
+            for (const [historyId, item] of Object.entries(userHistory)) {
               const historyItem = item as any;
               historyList.push({
                 id: historyId,
                 oderId: historyId,
-                userId: historyItem.userId || userId,
-                username: historyItem.username || 'Unknown',
+                userId: userId,
+                username: historyItem.username || users.find(u => u.uid === userId)?.email || 'Unknown',
                 service: historyItem.service,
                 inputCount: historyItem.inputCount,
                 stats: historyItem.stats,
@@ -216,15 +215,15 @@ export default function Admin() {
       }
     });
 
-    // Subscribe to live hits
-    const liveHitsRef = ref(database, 'liveHits');
+    // Subscribe to live hits from adminData (per Firebase rules)
+    const liveHitsRef = ref(database, 'adminData/liveHits');
     onValue(liveHitsRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
         const hitsList: LiveHit[] = Object.entries(data)
           .map(([id, hit]) => ({ id, ...(hit as any) }))
           .sort((a, b) => b.createdAt - a.createdAt)
-          .slice(0, 100); // Keep only latest 100
+          .slice(0, 100);
         setLiveHits(hitsList);
       } else {
         setLiveHits([]);

