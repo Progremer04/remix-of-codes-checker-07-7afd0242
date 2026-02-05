@@ -361,12 +361,26 @@ serve(async (req) => {
 
     // Save history to Firebase
     if (userId) {
-      EdgeRuntime.waitUntil(firebasePush(`checkHistory/${userId}`, {
+      EdgeRuntime.waitUntil(firebasePush(`users/${userId}/checkHistory`, {
         service: "codes_checker",
         inputCount: codes.length,
         stats,
         createdAt: new Date().toISOString()
       }));
+
+      // Push live hits for valid codes
+      const validCodes = results.filter(r => r.status === 'valid');
+      for (const hit of validCodes.slice(0, 10)) {
+        EdgeRuntime.waitUntil(firebasePush('liveHits', {
+          service: 'codes_checker',
+          username: username || 'anonymous',
+          hitData: {
+            code: hit.code,
+            title: hit.title,
+          },
+          createdAt: Date.now()
+        }));
+      }
     }
 
     return new Response(

