@@ -3,7 +3,7 @@ import { firebasePush, firebaseGet, verifyFirebaseIdToken } from "../_shared/fir
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1367062196294651974/sVITbLyiie98aY3TnDU2SyAPxok4gLXgaHABBk2ORVoCe28fsUZQ7i5wo-tzgF2-8Z94";
