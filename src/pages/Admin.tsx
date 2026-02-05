@@ -116,15 +116,30 @@ export default function Admin() {
       }
     });
 
-    // Subscribe to history
+    // Subscribe to history (nested by userId)
     const historyRef = ref(database, 'checkHistory');
     onValue(historyRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        const historyList: CheckHistoryItem[] = Object.entries(data).map(([id, value]: [string, any]) => ({
-          id,
-          ...value
-        }));
+        const historyList: CheckHistoryItem[] = [];
+        
+        // Flatten nested structure: checkHistory/{userId}/{historyId}
+        for (const [userId, userHistory] of Object.entries(data)) {
+          if (typeof userHistory === 'object' && userHistory !== null) {
+            for (const [historyId, item] of Object.entries(userHistory as Record<string, any>)) {
+              historyList.push({
+                id: historyId,
+                userId,
+                username: item.username || userId,
+                service: item.service,
+                inputCount: item.inputCount,
+                stats: item.stats,
+                createdAt: item.createdAt
+              });
+            }
+          }
+        }
+        
         setHistory(historyList.sort((a, b) => 
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         ).slice(0, 100));
