@@ -46,9 +46,27 @@ interface ManusCheckResult {
   email: string;
   name: string;
   membership: string;
+  plan: string;
   totalCredits: string;
   freeCredits: string;
+  usedCredits: string;
   error?: string;
+  timestamp?: string;
+  checkDuration?: number;
+  threadId?: number;
+}
+
+interface ManusSessionInfo {
+  startTime: string;
+  endTime: string;
+  duration: string;
+  clientIP?: string;
+  userAgent?: string;
+  timezone?: string;
+  country?: string;
+  threadsUsed: number;
+  accountsProcessed: number;
+  successRate: string;
 }
 
 interface SessionInfo {
@@ -158,6 +176,7 @@ export default function Index() {
   const [manusStatus, setManusStatus] = useState('');
   const [manusResults, setManusResults] = useState<ManusCheckResult[]>([]);
   const [manusThreads, setManusThreads] = useState(5);
+  const [manusSessionInfo, setManusSessionInfo] = useState<ManusSessionInfo | null>(null);
 
   // Hotmail Checker State
   const [hotmailAccounts, setHotmailAccounts] = useState('');
@@ -591,11 +610,24 @@ export default function Index() {
     setIsManusChecking(true);
     setManusResults([]);
     setManusProgress(0);
+    setManusSessionInfo(null);
     setManusStatus('Connecting to server...');
 
     try {
+      // Get client info for Canary-style logging
+      const clientInfo = {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        country: navigator.language?.split('-')[1] || 'Unknown',
+        userAgent: navigator.userAgent
+      };
+
       const { data, error } = await supabase.functions.invoke('manus-checker', {
-        body: { cookies: manusCookiesList, threads: manusThreads, username }
+        body: { 
+          cookies: manusCookiesList, 
+          threads: manusThreads, 
+          username,
+          clientInfo
+        }
       });
 
       if (error) {
@@ -612,9 +644,12 @@ export default function Index() {
       }
 
       setManusResults(data.results);
+      setManusSessionInfo(data.sessionInfo);
       setManusProgress(manusCookiesList.length);
       setManusStatus('Complete!');
-      toast.success(`Checked ${data.stats?.total || 0} accounts, ${data.stats?.success || 0} valid`);
+      
+      const duration = data.sessionInfo?.duration || 'N/A';
+      toast.success(`Checked ${data.stats?.total || 0} accounts in ${duration}, ${data.stats?.success || 0} hits`);
       
       await saveHistory('manus_checker', manusCookiesList.length, data.stats, data.results);
 
@@ -630,6 +665,7 @@ export default function Index() {
     setManusResults([]);
     setManusProgress(0);
     setManusStatus('');
+    setManusSessionInfo(null);
   };
 
   // Hotmail Checker functions
@@ -1569,28 +1605,85 @@ socks5://host:port
 
                 {manusResults.length > 0 && (
                   <>
-                    <div className="grid grid-cols-2 gap-4 max-w-md mx-auto">
+                    {/* Session Info Panel (Canary Style) */}
+                    {manusSessionInfo && (
+                      <div className="glass-card p-4 rounded-xl border border-primary/20 font-mono text-xs">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Clock className="w-4 h-4 text-primary" />
+                          <span className="text-primary font-semibold">SESSION INFO</span>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-muted-foreground">
+                          <div>
+                            <span className="text-foreground">Started:</span> {manusSessionInfo.startTime}
+                          </div>
+                          <div>
+                            <span className="text-foreground">Duration:</span> {manusSessionInfo.duration}
+                          </div>
+                          <div>
+                            <span className="text-foreground">Threads:</span> {manusSessionInfo.threadsUsed}
+                          </div>
+                          <div>
+                            <span className="text-foreground">Success Rate:</span> <span className="text-success">{manusSessionInfo.successRate}</span>
+                          </div>
+                          <div>
+                            <span className="text-foreground">Processed:</span> {manusSessionInfo.accountsProcessed} accounts
+                          </div>
+                          <div>
+                            <span className="text-foreground">Timezone:</span> {manusSessionInfo.timezone}
+                          </div>
+                          <div className="col-span-2">
+                            <span className="text-foreground">End:</span> {manusSessionInfo.endTime}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 max-w-2xl mx-auto">
                       <StatsCard
-                        label="Valid"
+                        label="Hits"
                         value={manusStats.success}
                         icon={<CheckCircle className="w-5 h-5" />}
                         colorClass="text-success"
                       />
                       <StatsCard
-                        label="Invalid"
+                        label="Failed"
                         value={manusStats.failed}
                         icon={<XCircle className="w-5 h-5" />}
                         colorClass="text-destructive"
                       />
+                      <StatsCard
+                        label="Total"
+                        value={manusStats.total}
+                        icon={<Cookie className="w-5 h-5" />}
+                        colorClass="text-primary"
+                      />
+                      <StatsCard
+                        label="Rate"
+                        value={manusStats.total > 0 ? `${((manusStats.success / manusStats.total) * 100).toFixed(0)}%` : '0%'}
+                        icon={<Clock className="w-5 h-5" />}
+                        colorClass="text-blue-500"
+                      />
                     </div>
 
+                    {/* Results - Hits with Email | Plan | Credits */}
                     <ResultCard
-                      title="Valid Accounts"
+                      title="HITS - Email | Plan | Credits"
                       icon={<CheckCircle className="w-5 h-5" />}
                       items={manusResults.filter(r => r.status === 'success').map(r => 
-                        `${r.email} | ${r.name} | ${r.membership} | Credits: ${r.totalCredits}`
+                        `${r.email} | ${r.plan || r.membership} | Total: ${r.totalCredits} | Free: ${r.freeCredits}`
                       )}
                       colorClass="text-success"
+                    />
+
+                    {/* Failed accounts */}
+                    <ResultCard
+                      title="Failed Cookies"
+                      icon={<XCircle className="w-5 h-5" />}
+                      items={manusResults.filter(r => r.status === 'failed').map(r => 
+                        `${r.filename} | ${r.error || 'Invalid cookie'}`
+                      )}
+                      colorClass="text-destructive"
                     />
                   </>
                 )}

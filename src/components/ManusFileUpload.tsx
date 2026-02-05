@@ -1,11 +1,13 @@
 import { useState, useRef } from 'react';
-import { Upload, FileText, Cookie, Trash2, Loader2 } from 'lucide-react';
+import { Upload, FileText, Cookie, Trash2, Loader2, Archive, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import JSZip from 'jszip';
 
 interface UploadedFile {
   name: string;
   content: string;
+  source: 'file' | 'zip';
 }
 
 interface ManusFileUploadProps {
@@ -16,33 +18,76 @@ interface ManusFileUploadProps {
 export function ManusFileUpload({ onFilesLoaded, isLoading }: ManusFileUploadProps) {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [isProcessingZip, setIsProcessingZip] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
+
+  const processZipFile = async (file: File): Promise<UploadedFile[]> => {
+    const zip = new JSZip();
+    const zipContent = await zip.loadAsync(file);
+    const extractedFiles: UploadedFile[] = [];
+    
+    const filePromises: Promise<void>[] = [];
+    
+    zipContent.forEach((relativePath, zipEntry) => {
+      if (!zipEntry.dir && relativePath.endsWith('.txt')) {
+        const promise = zipEntry.async('string').then(content => {
+          if (content.trim()) {
+            extractedFiles.push({
+              name: relativePath.split('/').pop() || relativePath,
+              content: content.trim(),
+              source: 'zip'
+            });
+          }
+        });
+        filePromises.push(promise);
+      }
+    });
+    
+    await Promise.all(filePromises);
+    return extractedFiles;
+  };
 
   const handleFiles = async (fileList: FileList) => {
     const newFiles: UploadedFile[] = [];
+    setIsProcessingZip(true);
     
-    for (const file of Array.from(fileList)) {
-      if (file.name.endsWith('.txt')) {
-        try {
-          const content = await file.text();
-          if (content.trim()) {
-            newFiles.push({
-              name: file.name,
-              content: content.trim()
-            });
+    try {
+      for (const file of Array.from(fileList)) {
+        if (file.name.endsWith('.zip')) {
+          // Process ZIP file
+          const zipFiles = await processZipFile(file);
+          newFiles.push(...zipFiles);
+          toast.success(`Extracted ${zipFiles.length} files from ${file.name}`);
+        } else if (file.name.endsWith('.txt')) {
+          // Process TXT file
+          try {
+            const content = await file.text();
+            if (content.trim()) {
+              newFiles.push({
+                name: file.name,
+                content: content.trim(),
+                source: 'file'
+              });
+            }
+          } catch (e) {
+            console.error('Failed to read file:', file.name, e);
           }
-        } catch (e) {
-          console.error('Failed to read file:', file.name, e);
         }
       }
-    }
-    
-    if (newFiles.length > 0) {
-      setFiles(prev => [...prev, ...newFiles]);
-      toast.success(`Loaded ${newFiles.length} cookie files`);
-    } else {
-      toast.error('No valid .txt files found');
+      
+      if (newFiles.length > 0) {
+        setFiles(prev => [...prev, ...newFiles]);
+        toast.success(`Loaded ${newFiles.length} cookie files`);
+      } else {
+        toast.error('No valid .txt or .zip files found');
+      }
+    } catch (e) {
+      console.error('Error processing files:', e);
+      toast.error('Failed to process files');
+    } finally {
+      setIsProcessingZip(false);
     }
   };
 
@@ -98,10 +143,10 @@ export function ManusFileUpload({ onFilesLoaded, isLoading }: ManusFileUploadPro
         <Cookie className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
         <h3 className="text-lg font-medium mb-2">Upload Cookie Files</h3>
         <p className="text-sm text-muted-foreground mb-4">
-          Drag & drop .txt cookie files here, or click to browse
+          Drag & drop .txt or .zip files here, or click to browse
         </p>
         
-        <div className="flex items-center justify-center gap-4">
+        <div className="flex items-center justify-center gap-3 flex-wrap">
           <input
             ref={fileInputRef}
             type="file"
@@ -120,10 +165,19 @@ export function ManusFileUpload({ onFilesLoaded, isLoading }: ManusFileUploadPro
             className="hidden"
             onChange={(e) => e.target.files && handleFiles(e.target.files)}
           />
+          <input
+            ref={zipInputRef}
+            type="file"
+            accept=".zip"
+            multiple
+            className="hidden"
+            onChange={(e) => e.target.files && handleFiles(e.target.files)}
+          />
           
           <Button
             variant="outline"
             onClick={() => fileInputRef.current?.click()}
+            disabled={isProcessingZip}
           >
             <Upload className="w-4 h-4 mr-2" />
             Select Files
@@ -132,9 +186,23 @@ export function ManusFileUpload({ onFilesLoaded, isLoading }: ManusFileUploadPro
           <Button
             variant="outline"
             onClick={() => folderInputRef.current?.click()}
+            disabled={isProcessingZip}
           >
-            <FileText className="w-4 h-4 mr-2" />
+            <FolderOpen className="w-4 h-4 mr-2" />
             Select Folder
+          </Button>
+          
+          <Button
+            variant="outline"
+            onClick={() => zipInputRef.current?.click()}
+            disabled={isProcessingZip}
+          >
+            {isProcessingZip ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Archive className="w-4 h-4 mr-2" />
+            )}
+            Upload .ZIP
           </Button>
         </div>
       </div>
@@ -157,7 +225,11 @@ export function ManusFileUpload({ onFilesLoaded, isLoading }: ManusFileUploadPro
                 className="flex items-center justify-between p-2 bg-accent/50 rounded-lg"
               >
                 <div className="flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-primary" />
+                  {file.source === 'zip' ? (
+                    <Archive className="w-4 h-4 text-primary" />
+                  ) : (
+                    <FileText className="w-4 h-4 text-primary" />
+                  )}
                   <span className="text-sm truncate max-w-[200px]">{file.name}</span>
                   <span className="text-xs text-muted-foreground">
                     ({file.content.length} chars)
@@ -177,13 +249,18 @@ export function ManusFileUpload({ onFilesLoaded, isLoading }: ManusFileUploadPro
           
           <Button 
             onClick={processFiles}
-            disabled={isLoading}
+            disabled={isLoading || isProcessingZip}
             className="w-full mt-4"
           >
             {isLoading ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 Processing...
+              </>
+            ) : isProcessingZip ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Extracting ZIP...
               </>
             ) : (
               <>
