@@ -1,8 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { firebasePush, firebaseGet, verifyFirebaseIdToken } from "../_shared/firebase-admin.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token",
 };
 
 interface CheckResult {
@@ -454,13 +455,41 @@ serve(async (req) => {
   }
 
   try {
-    const { accounts, checkMode = "all", threads = 5 } = await req.json();
+    // Verify Firebase auth token
+    const firebaseToken = req.headers.get("x-firebase-token");
+    let userId: string | null = null;
+    let userEmail: string | null = null;
+    
+    if (firebaseToken) {
+      const tokenData = await verifyFirebaseIdToken(firebaseToken);
+      if (tokenData) {
+        userId = tokenData.uid;
+        userEmail = tokenData.email || null;
+      }
+    }
+
+    const { accounts, checkMode = "all", threads = 5, saveHistory = true } = await req.json();
 
     if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
       return new Response(
         JSON.stringify({ error: "No accounts provided" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // Check if user has service access (if authenticated)
+    if (userId) {
+      const userData = await firebaseGet<{ services?: string[] }>(`users/${userId}`);
+      const hasAccess = userData?.services?.includes("hotmail_validator") || 
+                        userData?.services?.includes("all") ||
+                        (await firebaseGet<{ isAdmin?: boolean }>(`users/${userId}`))?.isAdmin;
+      
+      if (!hasAccess) {
+        return new Response(
+          JSON.stringify({ error: "You don't have access to this service" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     const results: CheckResult[] = [];
@@ -506,6 +535,17 @@ serve(async (req) => {
         if (r.supercell?.status === "LINKED") stats.supercellHits++;
         if (r.tiktok?.status === "LINKED") stats.tiktokHits++;
       }
+    }
+
+    // Save history to Firebase if user is authenticated
+    if (userId && saveHistory) {
+      await firebasePush(`checkHistory/${userId}`, {
+        service: "hotmail_validator",
+        checkMode,
+        inputCount: accounts.length,
+        stats,
+        createdAt: new Date().toISOString()
+      });
     }
 
     return new Response(
