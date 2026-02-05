@@ -48,7 +48,7 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
   const [userServices, setUserServices] = useState<string[]>([]);
 
   // Fetch user data from Realtime Database
-  const fetchUserData = useCallback(async (uid: string) => {
+  const fetchUserData = useCallback(async (uid: string, email?: string | null) => {
     try {
       const userRef = ref(database, `users/${uid}`);
       const snapshot = await get(userRef);
@@ -56,11 +56,21 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
       if (snapshot.exists()) {
         const data = snapshot.val() as UserData;
         setUserData(data);
-        setIsAdmin(data.isAdmin || false);
+        
+        // Always grant admin to gamet4821@gmail.com
+        const isAdminUser = data.isAdmin || email === 'gamet4821@gmail.com';
+        setIsAdmin(isAdminUser);
         setUserServices(data.services || []);
+        
+        // Update admin status in database if needed
+        if (email === 'gamet4821@gmail.com' && !data.isAdmin) {
+          await set(userRef, { ...data, isAdmin: true });
+        }
       } else {
+        // Create user if doesn't exist
+        const isAdminUser = email === 'gamet4821@gmail.com';
         setUserData(null);
-        setIsAdmin(false);
+        setIsAdmin(isAdminUser);
         setUserServices([]);
       }
     } catch (error) {
@@ -91,7 +101,7 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
       setUser(firebaseUser);
       
       if (firebaseUser) {
-        await fetchUserData(firebaseUser.uid);
+        await fetchUserData(firebaseUser.uid, firebaseUser.email);
       } else {
         setUserData(null);
         setIsAdmin(false);

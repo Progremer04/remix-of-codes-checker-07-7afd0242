@@ -57,22 +57,45 @@ interface HotmailCheckResult {
   status: string;
   country?: string;
   name?: string;
+  // Microsoft Subscriptions
+  msStatus?: string;
+  subscriptions?: {
+    name: string;
+    category: string;
+    daysRemaining?: string;
+    autoRenew?: string;
+    isExpired?: boolean;
+  }[];
+  rewardsPoints?: string;
+  balance?: string;
+  // PSN
   psn?: {
     status: string;
     orders: number;
     purchases: any[];
   };
+  // Steam
   steam?: {
     status: string;
     count: number;
+    purchases?: any[];
   };
+  // Supercell
   supercell?: {
     status: string;
     games: string[];
   };
+  // TikTok
   tiktok?: {
     status: string;
     username?: string;
+  };
+  // Minecraft
+  minecraft?: {
+    status: string;
+    username?: string;
+    uuid?: string;
+    capes?: string[];
   };
   error?: string;
 }
@@ -232,9 +255,12 @@ export default function Index() {
     invalid: hotmailResults.filter(r => r.status === 'invalid').length,
     twoFa: hotmailResults.filter(r => r.status === '2fa').length,
     locked: hotmailResults.filter(r => r.status === 'locked').length,
+    msPremium: hotmailResults.filter(r => r.msStatus === 'PREMIUM').length,
     psnHits: hotmailResults.filter(r => r.psn?.status === 'HAS_ORDERS').length,
     steamHits: hotmailResults.filter(r => r.steam?.status === 'HAS_PURCHASES').length,
     supercellHits: hotmailResults.filter(r => r.supercell?.status === 'LINKED').length,
+    tiktokHits: hotmailResults.filter(r => r.tiktok?.status === 'LINKED').length,
+    minecraftHits: hotmailResults.filter(r => r.minecraft?.status === 'OWNED').length,
     total: hotmailResults.length,
   }), [hotmailResults]);
 
@@ -1173,11 +1199,13 @@ export default function Index() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All Services</SelectItem>
-                        <SelectItem value="psn">PSN Only</SelectItem>
-                        <SelectItem value="steam">Steam Only</SelectItem>
-                        <SelectItem value="supercell">Supercell Only</SelectItem>
-                        <SelectItem value="tiktok">TikTok Only</SelectItem>
+                        <SelectItem value="all">Full Scan (All)</SelectItem>
+                        <SelectItem value="microsoft">Microsoft Subs</SelectItem>
+                        <SelectItem value="psn">PlayStation</SelectItem>
+                        <SelectItem value="steam">Steam</SelectItem>
+                        <SelectItem value="supercell">Supercell</SelectItem>
+                        <SelectItem value="tiktok">TikTok</SelectItem>
+                        <SelectItem value="minecraft">Minecraft</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1227,7 +1255,8 @@ export default function Index() {
 
                 {hotmailResults.length > 0 && (
                   <>
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
                       <StatsCard
                         label="Valid"
                         value={hotmailStats.valid}
@@ -1235,26 +1264,40 @@ export default function Index() {
                         colorClass="text-success"
                       />
                       <StatsCard
-                        label="Invalid"
-                        value={hotmailStats.invalid}
-                        icon={<XCircle className="w-5 h-5" />}
-                        colorClass="text-destructive"
+                        label="MS Premium"
+                        value={hotmailStats.msPremium}
+                        icon={<Gamepad2 className="w-5 h-5" />}
+                        colorClass="text-purple-500"
                       />
                       <StatsCard
-                        label="PSN Hits"
+                        label="PSN"
                         value={hotmailStats.psnHits}
                         icon={<Gamepad2 className="w-5 h-5" />}
-                        colorClass="text-primary"
+                        colorClass="text-blue-500"
                       />
                       <StatsCard
-                        label="Steam Hits"
+                        label="Steam"
                         value={hotmailStats.steamHits}
                         icon={<ShoppingCart className="w-5 h-5" />}
-                        colorClass="text-primary"
+                        colorClass="text-cyan-500"
+                      />
+                      <StatsCard
+                        label="Minecraft"
+                        value={hotmailStats.minecraftHits}
+                        icon={<Shield className="w-5 h-5" />}
+                        colorClass="text-green-500"
+                      />
+                      <StatsCard
+                        label="2FA"
+                        value={hotmailStats.twoFa}
+                        icon={<AlertTriangle className="w-5 h-5" />}
+                        colorClass="text-warning"
                       />
                     </div>
 
+                    {/* Results Grid */}
                     <div className="grid lg:grid-cols-2 gap-4">
+                      {/* Valid Accounts */}
                       <ResultCard
                         title="Valid Accounts"
                         icon={<CheckCircle className="w-5 h-5" />}
@@ -1263,27 +1306,78 @@ export default function Index() {
                         )}
                         colorClass="text-success"
                       />
+                      
+                      {/* MS Premium */}
                       <ResultCard
-                        title="PSN Orders"
+                        title="MS Premium (Xbox/M365)"
                         icon={<Gamepad2 className="w-5 h-5" />}
-                        items={hotmailResults.filter(r => r.psn?.status === 'HAS_ORDERS').map(r => 
-                          `${r.email} | ${r.psn?.orders} orders`
-                        )}
-                        colorClass="text-primary"
+                        items={hotmailResults.filter(r => r.msStatus === 'PREMIUM').map(r => {
+                          const subs = r.subscriptions?.filter(s => !s.isExpired).map(s => 
+                            `${s.name}${s.daysRemaining ? ` (${s.daysRemaining}d)` : ''}`
+                          ).join(', ') || '';
+                          return `${r.email}:${r.password} | ${subs}`;
+                        })}
+                        colorClass="text-purple-500"
                       />
+                      
+                      {/* PSN */}
+                      <ResultCard
+                        title="PlayStation Orders"
+                        icon={<Gamepad2 className="w-5 h-5" />}
+                        items={hotmailResults.filter(r => r.psn?.status === 'HAS_ORDERS').map(r => {
+                          const purchases = r.psn?.purchases?.slice(0, 3).map(p => p.item).join(', ') || '';
+                          return `${r.email}:${r.password} | ${r.psn?.orders} orders${purchases ? ` | ${purchases}` : ''}`;
+                        })}
+                        colorClass="text-blue-500"
+                      />
+                      
+                      {/* Steam */}
                       <ResultCard
                         title="Steam Purchases"
                         icon={<ShoppingCart className="w-5 h-5" />}
                         items={hotmailResults.filter(r => r.steam?.status === 'HAS_PURCHASES').map(r => 
-                          `${r.email} | ${r.steam?.count} purchases`
+                          `${r.email}:${r.password} | ${r.steam?.count} purchases`
                         )}
-                        colorClass="text-primary"
+                        colorClass="text-cyan-500"
                       />
+                      
+                      {/* Minecraft */}
+                      <ResultCard
+                        title="Minecraft Accounts"
+                        icon={<Shield className="w-5 h-5" />}
+                        items={hotmailResults.filter(r => r.minecraft?.status === 'OWNED').map(r => {
+                          const capes = r.minecraft?.capes?.length ? ` | Capes: ${r.minecraft.capes.join(',')}` : '';
+                          return `${r.email}:${r.password} | ${r.minecraft?.username}${capes}`;
+                        })}
+                        colorClass="text-green-500"
+                      />
+                      
+                      {/* Supercell */}
+                      <ResultCard
+                        title="Supercell Games"
+                        icon={<Shield className="w-5 h-5" />}
+                        items={hotmailResults.filter(r => r.supercell?.status === 'LINKED').map(r => 
+                          `${r.email}:${r.password} | ${r.supercell?.games?.join(', ')}`
+                        )}
+                        colorClass="text-yellow-500"
+                      />
+                      
+                      {/* TikTok */}
+                      <ResultCard
+                        title="TikTok Linked"
+                        icon={<Mail className="w-5 h-5" />}
+                        items={hotmailResults.filter(r => r.tiktok?.status === 'LINKED').map(r => 
+                          `${r.email}:${r.password} | @${r.tiktok?.username}`
+                        )}
+                        colorClass="text-pink-500"
+                      />
+                      
+                      {/* 2FA / Locked */}
                       <ResultCard
                         title="2FA / Locked"
                         icon={<AlertTriangle className="w-5 h-5" />}
                         items={hotmailResults.filter(r => r.status === '2fa' || r.status === 'locked').map(r => 
-                          `${r.email} | ${r.status.toUpperCase()}`
+                          `${r.email}:${r.password} | ${r.status.toUpperCase()}`
                         )}
                         colorClass="text-warning"
                       />
