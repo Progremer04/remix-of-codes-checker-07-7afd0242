@@ -528,6 +528,46 @@ export default function Index() {
     setCheckStatus('');
   };
 
+  // Export Codes Checker results
+  const exportCodesResults = (type: 'valid' | 'used' | 'expired' | 'all') => {
+    let items: string[] = [];
+    let filename = 'codes';
+
+    switch (type) {
+      case 'valid':
+        items = validResults;
+        filename = 'valid_codes';
+        break;
+      case 'used':
+        items = usedResults;
+        filename = 'used_codes';
+        break;
+      case 'expired':
+        items = expiredResults;
+        filename = 'expired_codes';
+        break;
+      case 'all':
+        items = validResults;
+        filename = 'all_valid_codes';
+        break;
+    }
+
+    if (items.length === 0) {
+      toast.error('No codes to export');
+      return;
+    }
+
+    const content = items.join('\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}_${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Downloaded ${items.length} ${type} codes`);
+  };
+
   // WLID Claimer functions
   const claimWlids = async () => {
     if (accountsList.length === 0) {
@@ -580,6 +620,24 @@ export default function Index() {
     setClaimResults([]);
     setClaimProgress(0);
     setClaimStatus('');
+  };
+
+  // Export WLID tokens
+  const exportWlidTokens = () => {
+    if (successfulTokens.length === 0) {
+      toast.error('No tokens to export');
+      return;
+    }
+
+    const content = successfulTokens.join('\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `wlid_tokens_${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Downloaded ${successfulTokens.length} WLID tokens`);
   };
 
   // Xbox Fetcher functions
@@ -643,6 +701,24 @@ export default function Index() {
     setXboxResults([]);
     setXboxProgress(0);
     setXboxStatus('');
+  };
+
+  // Export Xbox codes
+  const exportXboxCodes = () => {
+    if (allXboxCodes.length === 0) {
+      toast.error('No Xbox codes to export');
+      return;
+    }
+
+    const content = allXboxCodes.join('\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `xbox_codes_${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Downloaded ${allXboxCodes.length} Xbox codes`);
   };
 
   // Manus Checker functions
@@ -1153,14 +1229,24 @@ export default function Index() {
               </Button>
               
               {checkResults.length > 0 && !isChecking && (
-                <Button 
-                  variant="outline" 
-                  onClick={handleCheckReset}
-                  className="shadow-3d hover:shadow-glow transition-all"
-                >
-                  <RotateCcw className="w-4 h-4 mr-2" />
-                  Reset
-                </Button>
+                <>
+                  <Button 
+                    variant="outline" 
+                    onClick={handleCheckReset}
+                    className="shadow-3d hover:shadow-glow transition-all"
+                  >
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                    Reset
+                  </Button>
+                  <Button 
+                    variant="secondary" 
+                    onClick={() => exportCodesResults('valid')}
+                    className="shadow-3d hover:shadow-glow transition-all"
+                  >
+                    <FileDown className="w-4 h-4 mr-2" />
+                    Export Valid
+                  </Button>
+                </>
               )}
             </div>
 
@@ -1282,14 +1368,24 @@ export default function Index() {
               </Button>
               
               {claimResults.length > 0 && !isClaiming && (
-                <Button 
-                  variant="outline" 
-                  onClick={handleClaimReset}
-                  className="shadow-3d hover:shadow-glow transition-all"
-                >
-                  <RotateCcw className="w-4 h-4 mr-2" />
-                  Reset
-                </Button>
+                <>
+                  <Button 
+                    variant="outline" 
+                    onClick={handleClaimReset}
+                    className="shadow-3d hover:shadow-glow transition-all"
+                  >
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                    Reset
+                  </Button>
+                  <Button 
+                    variant="secondary" 
+                    onClick={exportWlidTokens}
+                    className="shadow-3d hover:shadow-glow transition-all"
+                  >
+                    <FileDown className="w-4 h-4 mr-2" />
+                    Export Tokens
+                  </Button>
+                </>
               )}
             </div>
 
@@ -1397,14 +1493,24 @@ export default function Index() {
                   </Button>
                   
                   {xboxResults.length > 0 && !isXboxFetching && (
-                    <Button 
-                      variant="outline" 
-                      onClick={handleXboxReset}
-                      className="shadow-3d hover:shadow-glow transition-all"
-                    >
-                      <RotateCcw className="w-4 h-4 mr-2" />
-                      Reset
-                    </Button>
+                    <>
+                      <Button 
+                        variant="outline" 
+                        onClick={handleXboxReset}
+                        className="shadow-3d hover:shadow-glow transition-all"
+                      >
+                        <RotateCcw className="w-4 h-4 mr-2" />
+                        Reset
+                      </Button>
+                      <Button 
+                        variant="secondary" 
+                        onClick={exportXboxCodes}
+                        className="shadow-3d hover:shadow-glow transition-all"
+                      >
+                        <FileDown className="w-4 h-4 mr-2" />
+                        Export Codes
+                      </Button>
+                    </>
                   )}
                 </div>
 
