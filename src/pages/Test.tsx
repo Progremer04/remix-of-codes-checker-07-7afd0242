@@ -103,15 +103,17 @@ export default function Test() {
     addLog('Starting all edge function tests...');
     addLog(`Using ${accounts.length} test account(s)`);
 
-    // Test Codes Checker
+    // Test Codes Checker (requires wlids array)
     await testEdgeFunction('Codes Checker', 'check-codes', {
-      codes: ['TEST-CODE-123', 'XBOX-TEST-456'],
+      codes: ['XXXXX-XXXXX-XXXXX-XXXXX-XXXXX'],
+      wlids: ['test_wlid_token'],
       sessionId
     });
 
-    // Test WLID Claimer
+    // Test WLID Claimer (requires accounts array)
     await testEdgeFunction('WLID Claimer', 'claim-wlids', {
-      tokens: ['test_token_1', 'test_token_2'],
+      accounts: accounts.slice(0, 1),
+      threads: 1,
       sessionId
     });
 
