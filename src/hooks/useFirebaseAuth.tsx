@@ -95,13 +95,20 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
     return () => unsubscribe();
   }, [user]);
 
-  // Listen for auth state changes
+  // Listen for auth state changes - optimized for faster loading
   useEffect(() => {
+    // Set a timeout to prevent indefinite loading state
+    const loadingTimeout = setTimeout(() => {
+      setIsLoading(false);
+    }, 3000); // Max 3 seconds loading
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      clearTimeout(loadingTimeout);
       setUser(firebaseUser);
       
       if (firebaseUser) {
-        await fetchUserData(firebaseUser.uid, firebaseUser.email);
+        // Fetch user data in parallel, don't block loading
+        fetchUserData(firebaseUser.uid, firebaseUser.email);
       } else {
         setUserData(null);
         setIsAdmin(false);
@@ -111,7 +118,10 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
       setIsLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      clearTimeout(loadingTimeout);
+      unsubscribe();
+    };
   }, [fetchUserData]);
 
   // Check for magic link on mount
