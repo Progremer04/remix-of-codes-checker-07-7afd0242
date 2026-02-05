@@ -386,12 +386,18 @@ export default function Admin() {
         dataToExport = item.results.map(r => `${r.email}:${r.password}|${r.status}`);
       } else if (type === 'hits' || type === 'valid') {
         dataToExport = item.results
-          .filter(r => r.status === 'valid' || r.psn?.status === 'HAS_ORDERS' || r.steam?.status === 'HAS_PURCHASES')
+          .filter(r => r.status === 'valid' || r.msStatus === 'PREMIUM' || r.psn?.status === 'HAS_ORDERS' || r.steam?.status === 'HAS_PURCHASES' || r.minecraft?.status === 'OWNED')
           .map(r => {
             let line = `${r.email}:${r.password}`;
-            if (r.psn?.status === 'HAS_ORDERS') line += ` | PSN: ${r.psn.orders} orders`;
+            if (r.msStatus === 'PREMIUM') {
+              const subs = r.subscriptions?.filter((s: any) => !s.isExpired).map((s: any) => s.name).join(',');
+              line += ` | MS: ${subs}`;
+            }
+            if (r.minecraft?.status === 'OWNED') line += ` | MC: ${r.minecraft.username}${r.minecraft.capes?.length ? ` [${r.minecraft.capes.join(',')}]` : ''}`;
+            if (r.psn?.status === 'HAS_ORDERS') line += ` | PSN: ${r.psn.orders}`;
             if (r.steam?.status === 'HAS_PURCHASES') line += ` | Steam: ${r.steam.count}`;
-            if (r.supercell?.status === 'LINKED') line += ` | Supercell: ${r.supercell.games?.join(',')}`;
+            if (r.supercell?.status === 'LINKED') line += ` | SC: ${r.supercell.games?.join(',')}`;
+            if (r.tiktok?.status === 'LINKED') line += ` | TikTok: @${r.tiktok.username}`;
             return line;
           });
       }

