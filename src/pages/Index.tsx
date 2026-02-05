@@ -60,6 +60,7 @@ interface ManusCheckResult {
   timestamp?: string;
   checkDuration?: number;
   threadId?: number;
+  cookieContent?: string; // Full cookie content for export
 }
 
 interface ManusSessionInfo {
@@ -785,8 +786,14 @@ export default function Index() {
         userAgent: navigator.userAgent
       };
 
+      // Pass filenames along with cookies so backend can return them with results
+      const filenames = manusUploadedFiles.length > 0 
+        ? manusUploadedFiles.map(f => f.name)
+        : manusCookiesList.map((_, i) => `cookie_${i + 1}.txt`);
+
       const { data, error } = await invokeBackendFunction<any>('manus-checker', {
         cookies: manusCookiesList,
+        filenames,
         threads: manusThreads,
         username,
         clientInfo,
@@ -862,16 +869,17 @@ export default function Index() {
       const credits = hit.totalCredits || '0';
       const filename = `[${email}][${plan}][${credits}].txt`;
       
-      // Find original cookie content by filename or index
-      // Results come back in order, so we can match by index from filename (cookie_1.txt, cookie_2.txt, etc.)
-      let originalContent: string | null = null;
+      // Use cookieContent from backend response if available (preferred)
+      let originalContent: string | null = hit.cookieContent || null;
       
-      // Try to match by filename pattern (cookie_N.txt)
-      const indexMatch = hit.filename?.match(/cookie_(\d+)\.txt/);
-      if (indexMatch && manusUploadedFiles.length > 0) {
-        const idx = parseInt(indexMatch[1], 10) - 1;
-        if (idx >= 0 && idx < manusUploadedFiles.length) {
-          originalContent = manusUploadedFiles[idx].content;
+      // Fallback: try to match by filename pattern (cookie_N.txt) from uploaded files
+      if (!originalContent) {
+        const indexMatch = hit.filename?.match(/cookie_(\d+)\.txt/);
+        if (indexMatch && manusUploadedFiles.length > 0) {
+          const idx = parseInt(indexMatch[1], 10) - 1;
+          if (idx >= 0 && idx < manusUploadedFiles.length) {
+            originalContent = manusUploadedFiles[idx].content;
+          }
         }
       }
       
