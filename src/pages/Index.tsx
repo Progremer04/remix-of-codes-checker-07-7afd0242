@@ -15,6 +15,7 @@ import { Background3D } from '@/components/Background3D';
 import { UserDashboard } from '@/components/UserDashboard';
 import { ManusFileUpload, UploadedFile } from '@/components/ManusFileUpload';
 import { LiveProgressFeed } from '@/components/LiveProgressFeed';
+import { KeywordsInput } from '@/components/KeywordsInput';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -195,6 +196,7 @@ export default function Index() {
   const [hotmailThreads, setHotmailThreads] = useState(10);
   const [hotmailCheckMode, setHotmailCheckMode] = useState('all');
   const [hotmailProxies, setHotmailProxies] = useState('');
+  const [hotmailKeywords, setHotmailKeywords] = useState<string[]>([]);
   const [hotmailSessionInfo, setHotmailSessionInfo] = useState<SessionInfo | null>(null);
   const [hotmailStartTime, setHotmailStartTime] = useState<number>(0);
   
@@ -932,6 +934,7 @@ export default function Index() {
         checkMode: hotmailCheckMode,
         threads: hotmailThreads,
         proxies: proxyList,
+        keywords: hotmailKeywords,
         clientInfo,
         sessionId,
       });
@@ -1718,6 +1721,16 @@ socks5://host:port
                     value={hotmailProxies}
                     onChange={setHotmailProxies}
                     icon={<Shield className="w-4 h-4 text-primary" />}
+                  />
+                </div>
+
+                {/* Keywords Input - like Python's inboxer */}
+                <div className="max-w-2xl mx-auto">
+                  <KeywordsInput
+                    keywords={hotmailKeywords}
+                    onChange={setHotmailKeywords}
+                    placeholder="Add keywords to search in inbox (like paypal, receipt, crypto...)"
+                    maxKeywords={50}
                   />
                 </div>
 
