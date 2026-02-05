@@ -1,7 +1,8 @@
 import { useEffect, useRef, useMemo, useState } from 'react';
 import { ProgressUpdate } from '@/hooks/useRealtimeProgress';
-import { CheckCircle, XCircle, AlertCircle, Loader2, Lock, ShieldAlert, Zap, Wifi, WifiOff, Globe, Clock } from 'lucide-react';
+import { CheckCircle, XCircle, AlertCircle, Loader2, Lock, ShieldAlert, Zap, Wifi, WifiOff, Globe, Clock, Trash2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 interface LiveProgressFeedProps {
@@ -11,6 +12,7 @@ interface LiveProgressFeedProps {
   clientIp?: string;
   timezone?: string;
   showShortcuts?: boolean;
+  onClear?: () => void;
 }
 
 const statusConfig = {
@@ -25,10 +27,17 @@ const statusConfig = {
   error: { icon: AlertCircle, color: 'text-gray-400', bgColor: 'bg-gray-500/10', animate: false, label: '!' },
 };
 
-export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezone, showShortcuts = true }: LiveProgressFeedProps) {
+export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezone, showShortcuts = true, onClear }: LiveProgressFeedProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [localTime, setLocalTime] = useState(new Date().toLocaleTimeString('en-US', { hour12: false }));
+  
+  // Check if processing is complete
+  const isComplete = useMemo(() => {
+    if (updates.length === 0) return false;
+    const completed = updates.filter(u => u.status !== 'checking').length;
+    return completed >= total;
+  }, [updates, total]);
 
   // Calculate stats like Python's LiveStats
   const stats = useMemo(() => {
@@ -41,8 +50,7 @@ export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezo
     const errors = completed.filter(u => u.status === 'error').length;
     const noCodes = completed.filter(u => u.status === 'no_codes').length;
 
-    // Calculate CPM (checks per minute) - smoothed like typical Python CLI stats
-    // Use only COMPLETED checks within the last 60s to avoid spikes.
+    // Calculate CPM (checks per minute)
     const now = Date.now();
     const windowMs = 60_000;
     const windowCompleted = completed.filter(u => u.timestamp >= now - windowMs);
@@ -80,7 +88,7 @@ export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezo
     };
   }, [updates, total]);
 
-  // Format elapsed time like Python
+  // Format elapsed time
   const getElapsedTime = () => {
     if (updates.length < 2) return "00:00";
     const elapsed = Math.floor((updates[updates.length - 1].timestamp - updates[0].timestamp) / 1000);
@@ -117,15 +125,17 @@ export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezo
 
   return (
     <div className="card-3d relative rounded-xl p-4 space-y-3 font-mono animate-fade-in">
-      {/* Python-style header bar with IP/Timezone */}
+      {/* Header with status, IP/Timezone, and clear button */}
       <div className="flex items-center justify-between text-xs border-b border-border/50 pb-2">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <div className={cn(
               "w-2.5 h-2.5 rounded-full transition-colors",
-              isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'
+              isComplete ? 'bg-green-500' : isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'
             )} />
-            {isConnected ? (
+            {isComplete ? (
+              <span className="text-green-400 font-semibold">✓ Complete!</span>
+            ) : isConnected ? (
               <span className="text-green-400 flex items-center gap-1">
                 <Wifi className="w-3 h-3" /> Connected
               </span>
@@ -156,12 +166,25 @@ export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezo
             <Zap className="w-3 h-3" />
             {stats.cpm} CPM
           </span>
-          <span>ETA: {stats.eta}</span>
+          <span>ETA: {isComplete ? 'Done' : stats.eta}</span>
+          
+          {/* Clear button */}
+          {onClear && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={onClear}
+              className="h-6 px-2 text-xs text-muted-foreground hover:text-destructive"
+            >
+              <Trash2 className="w-3 h-3 mr-1" />
+              Clear
+            </Button>
+          )}
         </div>
       </div>
 
       {/* Keyboard shortcuts hint */}
-      {showShortcuts && (
+      {showShortcuts && !isComplete && (
         <div className="text-[10px] text-muted-foreground flex items-center gap-3 border-b border-border/30 pb-2">
           <span>Shortcuts:</span>
           <span className="px-1.5 py-0.5 bg-secondary rounded text-foreground">P</span>
@@ -175,10 +198,10 @@ export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezo
       
       {/* Python-style status bar with stats */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-        {/* Progress count like Python: [checked/total] */}
+        {/* Progress count */}
         <span className="text-blue-400 font-bold">[{stats.completed}/{total}]</span>
         
-        {/* Stats with icons (show EVERYTHING; don't hide zeros) */}
+        {/* Stats with icons */}
         <StatBadge count={stats.checking} label="Checking" color="text-blue-300" icon="⟳" show={true} />
         <StatBadge count={stats.hits} label="Valid" color="text-green-400" icon="✓" show={true} />
         <StatBadge count={stats.twoFa} label="2FA" color="text-orange-400" icon="🔐" show={true} />
@@ -187,10 +210,9 @@ export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezo
         <StatBadge count={stats.noCodes} label="No Codes" color="text-yellow-400" icon="○" show={true} />
         <StatBadge count={stats.errors} label="Errors" color="text-gray-400" icon="!" show={true} />
         
-        {/* Separator */}
         <span className="text-muted-foreground">|</span>
         
-        {/* Percentage with gradient color based on progress */}
+        {/* Percentage */}
         <span className={cn(
           "font-bold transition-colors",
           stats.percentage < 30 ? "text-blue-400" :
@@ -212,12 +234,11 @@ export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezo
         <div 
           className={cn(
             "h-full bg-gradient-to-r from-green-500 via-cyan-500 to-blue-500 transition-all duration-500 ease-out rounded-full",
-            stats.completed < total && "animate-pulse"
+            !isComplete && "animate-pulse"
           )}
           style={{ width: `${stats.percentage}%` }}
         />
-        {/* Scanning effect */}
-        {stats.completed < total && (
+        {!isComplete && (
           <div 
             className="absolute inset-y-0 w-20 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-scan"
             style={{ left: `${Math.max(0, stats.percentage - 10)}%` }}
@@ -225,7 +246,7 @@ export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezo
         )}
       </div>
 
-      {/* Live log feed - Python style output */}
+      {/* Live log feed */}
       <ScrollArea className="h-72 rounded-lg bg-black/60 border border-border/50">
         <div 
           ref={scrollRef} 
@@ -319,7 +340,7 @@ function ProgressRow({ update }: { update: ProgressUpdate }) {
           </span>
         </div>
         
-        {/* Extra data for hits (like Python shows) */}
+        {/* Extra data for hits */}
         {isHit && extraData.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
             {extraData.map((data, i) => (
@@ -364,9 +385,6 @@ interface ExtraDataItem {
 
 function parseExtraData(message: string): ExtraDataItem[] {
   const items: ExtraDataItem[] = [];
-  
-  // Parse the message for Python-style hit data
-  // Format: "Valid | GAME PASS ULTIMATE(30d) | 🎯PSN:5 | ⛏️MC:Steve"
   
   if (message.includes('GAME PASS') || message.includes('M365') || message.includes('PREMIUM')) {
     const match = message.match(/(GAME PASS[^|]*|M365[^|]*|PREMIUM[^|]*)/i);
@@ -424,6 +442,16 @@ function parseExtraData(message: string): ExtraDataItem[] {
       label: match ? `TikTok:${match[1].substring(0, 10)}` : 'TikTok',
       color: 'text-pink-300',
       bgColor: 'bg-pink-500/20'
+    });
+  }
+  
+  if (message.includes('Keywords') || message.includes('🔑')) {
+    const match = message.match(/Keywords[:\s]*([^|]+)/i);
+    items.push({
+      icon: '🔑',
+      label: match ? match[1].trim().substring(0, 30) : 'Keywords',
+      color: 'text-amber-300',
+      bgColor: 'bg-amber-500/20'
     });
   }
   
