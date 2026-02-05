@@ -1,7 +1,8 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo, useState } from 'react';
 import { ProgressUpdate } from '@/hooks/useRealtimeProgress';
-import { CheckCircle, XCircle, AlertCircle, Loader2, Lock, ShieldAlert, Gamepad2, Mail } from 'lucide-react';
+import { CheckCircle, XCircle, AlertCircle, Loader2, Lock, ShieldAlert, Zap, Wifi, WifiOff } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
 
 interface LiveProgressFeedProps {
   updates: ProgressUpdate[];
@@ -23,6 +24,7 @@ const statusConfig = {
 
 export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFeedProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
 
   // Calculate stats like Python's LiveStats
   const stats = useMemo(() => {
@@ -32,6 +34,7 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
     const locked = completed.filter(u => u.status === 'locked').length;
     const bads = completed.filter(u => u.status === 'invalid' || u.status === 'failed').length;
     const errors = completed.filter(u => u.status === 'error').length;
+    const noCodes = completed.filter(u => u.status === 'no_codes').length;
     
     // Calculate CPM (checks per minute)
     const firstUpdate = updates[0];
@@ -45,6 +48,16 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
       }
     }
     
+    // Estimated time remaining
+    let eta = '--:--';
+    if (cpm > 0 && total > 0) {
+      const remaining = total - completed.length;
+      const etaSeconds = Math.round((remaining / cpm) * 60);
+      const etaMins = Math.floor(etaSeconds / 60).toString().padStart(2, '0');
+      const etaSecs = (etaSeconds % 60).toString().padStart(2, '0');
+      eta = `${etaMins}:${etaSecs}`;
+    }
+    
     return { 
       completed: completed.length, 
       hits, 
@@ -52,20 +65,12 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
       locked, 
       bads, 
       errors,
+      noCodes,
       cpm,
+      eta,
       percentage: total > 0 ? Math.round((completed.length / total) * 100) : 0
     };
   }, [updates, total]);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [updates]);
-
-  if (updates.length === 0) {
-    return null;
-  }
 
   // Format elapsed time like Python
   const getElapsedTime = () => {
@@ -76,45 +81,79 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
     return `${mins}:${secs}`;
   };
 
+  // Auto-scroll when new updates come in
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [updates, autoScroll]);
+
+  // Detect when user manually scrolls
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    setAutoScroll(isAtBottom);
+  };
+
+  if (updates.length === 0) {
+    return null;
+  }
+
   return (
-    <div className="card-3d rounded-xl p-4 space-y-3 font-mono">
-      {/* Python-style status bar */}
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+    <div className="card-3d rounded-xl p-4 space-y-3 font-mono animate-fade-in">
+      {/* Python-style header bar */}
+      <div className="flex items-center justify-between text-xs border-b border-border/50 pb-2">
+        <div className="flex items-center gap-2">
+          <div className={cn(
+            "w-2.5 h-2.5 rounded-full transition-colors",
+            isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'
+          )} />
+          {isConnected ? (
+            <span className="text-green-400 flex items-center gap-1">
+              <Wifi className="w-3 h-3" /> Connected
+            </span>
+          ) : (
+            <span className="text-red-400 flex items-center gap-1">
+              <WifiOff className="w-3 h-3" /> Disconnected
+            </span>
+          )}
+        </div>
         
+        <div className="flex items-center gap-3 text-muted-foreground">
+          <span className="text-yellow-400 flex items-center gap-1">
+            <Zap className="w-3 h-3" />
+            {stats.cpm} CPM
+          </span>
+          <span>ETA: {stats.eta}</span>
+        </div>
+      </div>
+      
+      {/* Python-style status bar with stats */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
         {/* Progress count like Python: [checked/total] */}
         <span className="text-blue-400 font-bold">[{stats.completed}/{total}]</span>
         
-        {/* Hits with icon */}
-        {stats.hits > 0 && (
-          <span className="text-green-400 font-bold">✓{stats.hits}</span>
-        )}
-        
-        {/* 2FA count */}
-        {stats.twoFa > 0 && (
-          <span className="text-yellow-400">🔐{stats.twoFa}</span>
-        )}
-        
-        {/* Locked count */}
-        {stats.locked > 0 && (
-          <span className="text-red-500">🔒{stats.locked}</span>
-        )}
-        
-        {/* Bads count */}
-        {stats.bads > 0 && (
-          <span className="text-red-400">✗{stats.bads}</span>
-        )}
+        {/* Stats with icons */}
+        <StatBadge count={stats.hits} label="Valid" color="text-green-400" icon="✓" show={true} />
+        <StatBadge count={stats.twoFa} label="2FA" color="text-orange-400" icon="🔐" show={stats.twoFa > 0} />
+        <StatBadge count={stats.locked} label="Locked" color="text-red-500" icon="🔒" show={stats.locked > 0} />
+        <StatBadge count={stats.bads} label="Invalid" color="text-red-400" icon="✗" show={stats.bads > 0} />
+        <StatBadge count={stats.noCodes} label="No Codes" color="text-yellow-400" icon="○" show={stats.noCodes > 0} />
+        <StatBadge count={stats.errors} label="Errors" color="text-gray-400" icon="!" show={stats.errors > 0} />
         
         {/* Separator */}
         <span className="text-muted-foreground">|</span>
         
-        {/* Percentage */}
-        <span className="text-white">{stats.percentage}%</span>
-        
-        <span className="text-muted-foreground">|</span>
-        
-        {/* CPM */}
-        <span className="text-yellow-400">{stats.cpm}CPM</span>
+        {/* Percentage with gradient color based on progress */}
+        <span className={cn(
+          "font-bold transition-colors",
+          stats.percentage < 30 ? "text-blue-400" :
+          stats.percentage < 70 ? "text-cyan-400" :
+          stats.percentage < 100 ? "text-green-400" :
+          "text-green-500"
+        )}>
+          {stats.percentage}%
+        </span>
         
         <span className="text-muted-foreground">|</span>
         
@@ -122,84 +161,152 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
         <span className="text-cyan-400">{getElapsedTime()}</span>
       </div>
 
-      {/* Progress bar like Python */}
-      <div className="h-2 bg-secondary rounded-full overflow-hidden">
+      {/* Animated progress bar */}
+      <div className="h-2.5 bg-secondary rounded-full overflow-hidden relative">
         <div 
-          className="h-full bg-gradient-to-r from-green-500 via-cyan-500 to-blue-500 transition-all duration-300 ease-out rounded-full"
+          className={cn(
+            "h-full bg-gradient-to-r from-green-500 via-cyan-500 to-blue-500 transition-all duration-500 ease-out rounded-full",
+            stats.completed < total && "animate-pulse"
+          )}
           style={{ width: `${stats.percentage}%` }}
         />
+        {/* Scanning effect */}
+        {stats.completed < total && (
+          <div 
+            className="absolute inset-y-0 w-20 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-scan"
+            style={{ left: `${Math.max(0, stats.percentage - 10)}%` }}
+          />
+        )}
       </div>
 
       {/* Live log feed - Python style output */}
-      <ScrollArea className="h-64 rounded-lg bg-black/50 border border-border/50">
-        <div ref={scrollRef} className="p-3 space-y-0.5 text-xs">
-          {updates.map((update, idx) => {
-            const config = statusConfig[update.status] || statusConfig.error;
-            const Icon = config.icon;
-            const isHit = update.status === 'valid' || update.status === 'success';
-            
-            // Parse extra data from message if present
-            const extraData = parseExtraData(update.message);
-            
-            return (
-              <div 
-                key={`${update.index}-${idx}`}
-                className={`flex items-start gap-2 py-1 ${isHit ? 'bg-green-500/10 -mx-3 px-3' : ''} animate-fade-in`}
-              >
-                {/* Status icon */}
-                <Icon 
-                  className={`w-3.5 h-3.5 mt-0.5 flex-shrink-0 ${config.color} ${config.animate ? 'animate-spin' : ''}`} 
-                />
-                
-                {/* Main content */}
-                <div className="flex-1 min-w-0">
-                  {/* Email line */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className={isHit ? 'text-green-400 font-bold' : 'text-foreground'}>
-                      {truncateEmail(update.email)}
-                    </span>
-                    
-                    {/* Status badge */}
-                    <span className={`${config.color} text-[10px] uppercase`}>
-                      {update.status === 'checking' ? 'checking...' : update.status}
-                    </span>
-                  </div>
-                  
-                  {/* Extra data for hits (like Python shows) */}
-                  {isHit && extraData.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-0.5">
-                      {extraData.map((data, i) => (
-                        <span 
-                          key={i} 
-                          className={`text-[10px] px-1.5 py-0.5 rounded ${data.color} ${data.bgColor}`}
-                        >
-                          {data.icon} {data.label}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                
-                {/* Index */}
-                <span className="text-muted-foreground text-[10px] flex-shrink-0">
-                  [{update.index}/{update.total}]
-                </span>
-              </div>
-            );
-          })}
+      <ScrollArea className="h-72 rounded-lg bg-black/60 border border-border/50">
+        <div 
+          ref={scrollRef} 
+          className="p-3 space-y-0.5 text-xs"
+          onScroll={handleScroll}
+        >
+          {updates.map((update, idx) => (
+            <ProgressRow key={`${update.index}-${idx}`} update={update} />
+          ))}
         </div>
       </ScrollArea>
+      
+      {/* Auto-scroll indicator */}
+      {!autoScroll && (
+        <button 
+          onClick={() => {
+            setAutoScroll(true);
+            if (scrollRef.current) {
+              scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+            }
+          }}
+          className="absolute bottom-16 right-6 px-2 py-1 bg-primary text-primary-foreground text-xs rounded-md shadow-lg animate-bounce"
+        >
+          ↓ New updates
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Stat badge component
+function StatBadge({ count, label, color, icon, show }: { 
+  count: number; 
+  label: string; 
+  color: string; 
+  icon: string;
+  show: boolean;
+}) {
+  if (!show) return null;
+  return (
+    <span className={cn("font-semibold flex items-center gap-0.5", color)} title={label}>
+      {icon}{count}
+    </span>
+  );
+}
+
+// Individual progress row
+function ProgressRow({ update }: { update: ProgressUpdate }) {
+  const config = statusConfig[update.status] || statusConfig.error;
+  const Icon = config.icon;
+  const isHit = update.status === 'valid' || update.status === 'success';
+  
+  // Parse extra data from message if present
+  const extraData = parseExtraData(update.message);
+  
+  return (
+    <div 
+      className={cn(
+        "flex items-start gap-2 py-1.5 border-b border-border/20 last:border-0 transition-colors",
+        isHit && "bg-green-500/10 -mx-3 px-3 border-l-2 border-l-green-500",
+        update.status === 'checking' && "opacity-70"
+      )}
+    >
+      {/* Status icon */}
+      <Icon 
+        className={cn(
+          "w-3.5 h-3.5 mt-0.5 flex-shrink-0",
+          config.color,
+          config.animate && "animate-spin"
+        )} 
+      />
+      
+      {/* Main content */}
+      <div className="flex-1 min-w-0">
+        {/* Email line */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={cn(
+            "truncate max-w-[200px]",
+            isHit ? 'text-green-400 font-bold' : 'text-foreground'
+          )}>
+            {truncateEmail(update.email)}
+          </span>
+          
+          {/* Status badge */}
+          <span className={cn(
+            "text-[10px] uppercase font-medium px-1.5 py-0.5 rounded",
+            config.color,
+            config.bgColor
+          )}>
+            {update.status === 'checking' ? 'checking...' : update.status}
+          </span>
+        </div>
+        
+        {/* Extra data for hits (like Python shows) */}
+        {isHit && extraData.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {extraData.map((data, i) => (
+              <span 
+                key={i} 
+                className={cn(
+                  "text-[10px] px-1.5 py-0.5 rounded font-medium",
+                  data.color,
+                  data.bgColor
+                )}
+              >
+                {data.icon} {data.label}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      
+      {/* Index */}
+      <span className="text-muted-foreground text-[10px] flex-shrink-0 font-mono">
+        [{update.index}/{update.total}]
+      </span>
     </div>
   );
 }
 
 function truncateEmail(email: string): string {
-  if (email.length <= 40) return email;
+  if (email.length <= 35) return email;
   const atIndex = email.indexOf('@');
-  if (atIndex > 20) {
-    return email.substring(0, 18) + '...' + email.substring(atIndex);
+  if (atIndex > 15) {
+    return email.substring(0, 14) + '...' + email.substring(atIndex);
   }
-  return email.substring(0, 37) + '...';
+  return email.substring(0, 32) + '...';
 }
 
 interface ExtraDataItem {
@@ -255,7 +362,7 @@ function parseExtraData(message: string): ExtraDataItem[] {
     });
   }
   
-  if (message.includes('Supercell') || message.includes('CoC') || message.includes('Clash')) {
+  if (message.includes('Supercell') || message.includes('SC:') || message.includes('CoC') || message.includes('Clash')) {
     items.push({
       icon: '⚔️',
       label: 'Supercell',
@@ -265,9 +372,10 @@ function parseExtraData(message: string): ExtraDataItem[] {
   }
   
   if (message.includes('TikTok')) {
+    const match = message.match(/TikTok[:\s]*(\w+)/i);
     items.push({
       icon: '📱',
-      label: 'TikTok',
+      label: match ? `TikTok:${match[1].substring(0, 10)}` : 'TikTok',
       color: 'text-pink-300',
       bgColor: 'bg-pink-500/20'
     });

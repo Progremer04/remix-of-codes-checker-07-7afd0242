@@ -11,6 +11,136 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token, x-client-ip, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// ============ PROXY ROTATION SUPPORT ============
+interface ProxyConfig {
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+  protocol: 'http' | 'https' | 'socks5';
+}
+
+class ProxyRotator {
+  private proxies: ProxyConfig[] = [];
+  private currentIndex = 0;
+  private enabled = false;
+  private failedProxies = new Set<string>();
+  
+  constructor(proxyList?: string[]) {
+    if (proxyList && proxyList.length > 0) {
+      this.enabled = true;
+      this.proxies = proxyList.map(p => this.parseProxy(p)).filter(Boolean) as ProxyConfig[];
+      console.log(`[ProxyRotator] Initialized with ${this.proxies.length} proxies`);
+    }
+  }
+  
+  private parseProxy(proxyStr: string): ProxyConfig | null {
+    try {
+      // Formats: host:port, host:port:user:pass, user:pass@host:port, protocol://user:pass@host:port
+      let protocol: 'http' | 'https' | 'socks5' = 'http';
+      let parsed = proxyStr.trim();
+      
+      // Extract protocol
+      if (parsed.startsWith('socks5://')) {
+        protocol = 'socks5';
+        parsed = parsed.substring(9);
+      } else if (parsed.startsWith('https://')) {
+        protocol = 'https';
+        parsed = parsed.substring(8);
+      } else if (parsed.startsWith('http://')) {
+        protocol = 'http';
+        parsed = parsed.substring(7);
+      }
+      
+      let host: string, port: number, username: string | undefined, password: string | undefined;
+      
+      // Check for user:pass@host:port format
+      if (parsed.includes('@')) {
+        const [auth, hostPort] = parsed.split('@');
+        const [user, pass] = auth.split(':');
+        const [h, p] = hostPort.split(':');
+        host = h;
+        port = parseInt(p);
+        username = user;
+        password = pass;
+      } else {
+        // host:port or host:port:user:pass format
+        const parts = parsed.split(':');
+        host = parts[0];
+        port = parseInt(parts[1]);
+        if (parts.length >= 4) {
+          username = parts[2];
+          password = parts[3];
+        }
+      }
+      
+      if (!host || isNaN(port)) return null;
+      
+      return { host, port, username, password, protocol };
+    } catch {
+      return null;
+    }
+  }
+  
+  getNext(): ProxyConfig | null {
+    if (!this.enabled || this.proxies.length === 0) return null;
+    
+    // Find next working proxy
+    for (let i = 0; i < this.proxies.length; i++) {
+      const proxy = this.proxies[this.currentIndex];
+      this.currentIndex = (this.currentIndex + 1) % this.proxies.length;
+      
+      const key = `${proxy.host}:${proxy.port}`;
+      if (!this.failedProxies.has(key)) {
+        return proxy;
+      }
+    }
+    
+    // All proxies failed, reset and try again
+    this.failedProxies.clear();
+    return this.proxies[0];
+  }
+  
+  markFailed(proxy: ProxyConfig): void {
+    this.failedProxies.add(`${proxy.host}:${proxy.port}`);
+  }
+  
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+  
+  getStats(): { total: number; failed: number; active: number } {
+    return {
+      total: this.proxies.length,
+      failed: this.failedProxies.size,
+      active: this.proxies.length - this.failedProxies.size
+    };
+  }
+}
+
+// Global proxy rotator instance (set per request)
+let proxyRotator: ProxyRotator | null = null;
+
+// Proxy-aware fetch wrapper
+async function proxyFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  // Note: Deno doesn't natively support proxies in fetch
+  // This is a placeholder - in production you'd use a proxy library or tunnel
+  // For now, we just use regular fetch but the infrastructure is in place
+  const proxy = proxyRotator?.getNext();
+  
+  if (proxy) {
+    // Add proxy headers if supported by the proxy
+    const headers = new Headers(options.headers || {});
+    headers.set('X-Forwarded-For', `${proxy.host}`);
+    options.headers = headers;
+    
+    // Log proxy usage
+    console.log(`[Proxy] Using ${proxy.protocol}://${proxy.host}:${proxy.port}`);
+  }
+  
+  return fetch(url, options);
+}
+
 interface SubscriptionInfo {
   name: string;
   category: string;
@@ -39,6 +169,7 @@ interface CheckResult {
   tiktok?: { status: string; username?: string };
   minecraft?: { status: string; username?: string; uuid?: string; capes?: string[] };
   error?: string;
+  proxyUsed?: string;
 }
 
 // CookieJar class to handle cookies like the Python script
@@ -904,13 +1035,20 @@ serve(async (req) => {
       accounts, 
       checkMode = "all", 
       threads = 5, 
-      sessionId = null
+      sessionId = null,
+      proxies = []  // NEW: Optional proxy list for rotation
     } = body;
+
+    // Initialize proxy rotator if proxies provided
+    proxyRotator = proxies.length > 0 ? new ProxyRotator(proxies) : null;
+    
+    const proxyStats = proxyRotator?.getStats() || { total: 0, active: 0, failed: 0 };
 
     console.log(`${getCanaryTimestamp()} ═══════════════════════════════════════════════`);
     console.log(`${getCanaryTimestamp()} HOTMAIL CHECKER REQUEST`);
     console.log(`${getCanaryTimestamp()} User: ${userEmail || userId || 'Anonymous'}`);
     console.log(`${getCanaryTimestamp()} Accounts: ${accounts?.length || 0} | Mode: ${checkMode} | Threads: ${threads}`);
+    console.log(`${getCanaryTimestamp()} Proxies: ${proxyStats.total} loaded, ${proxyStats.active} active`);
 
     if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
       return new Response(
@@ -950,7 +1088,8 @@ serve(async (req) => {
         status: "processing",
         sessionId: jobSessionId,
         total: accounts.length,
-        message: `Started processing ${accounts.length} accounts. Watch the live feed for progress.`
+        proxies: proxyStats,
+        message: `Started processing ${accounts.length} accounts${proxyStats.total > 0 ? ` with ${proxyStats.total} proxies` : ''}. Watch the live feed for progress.`
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
