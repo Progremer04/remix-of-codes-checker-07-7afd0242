@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Key, Code, Play, Loader2, CheckCircle, XCircle, Clock, 
   AlertTriangle, RotateCcw, Users, Settings2, Gamepad2, 
   Cookie, Shield, Gift, LogOut, Mail, ShoppingCart, LayoutDashboard, Upload, Download, Zap,
-  Pause, Square, FileDown
+  Pause, Square, FileDown, BarChart3
 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { CodeInput } from '@/components/CodeInput';
@@ -27,6 +27,7 @@ import { useFirebaseAuth } from '@/hooks/useFirebaseAuth';
 import { ref, push, set } from 'firebase/database';
 import { database } from '@/integrations/firebase/config';
 import { useRealtimeProgress, generateSessionId } from '@/hooks/useRealtimeProgress';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import JSZip from 'jszip';
 
 interface ClaimResult {
@@ -206,6 +207,21 @@ export default function Index() {
   const { updates: hotmailUpdates, isConnected: hotmailConnected, clearUpdates: clearHotmailUpdates } = useRealtimeProgress(hotmailSessionId);
   const { updates: xboxUpdates, isConnected: xboxConnected, clearUpdates: clearXboxUpdates } = useRealtimeProgress(xboxSessionId);
   const { updates: manusUpdates, isConnected: manusConnected, clearUpdates: clearManusUpdates } = useRealtimeProgress(manusSessionId);
+  
+  // Client info for session display
+  const [clientIp, setClientIp] = useState<string>('');
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  
+  // Fetch client IP on mount
+  useEffect(() => {
+    fetch('https://api.ipify.org?format=json')
+      .then(res => res.json())
+      .then(data => setClientIp(data.ip || ''))
+      .catch(() => setClientIp('Unknown'));
+  }, []);
+  
+  // Active tab for keyboard shortcuts context
+  const [activeTab, setActiveTab] = useState('codes');
   
   const username = userData?.displayName || user?.email || 'User';
 
@@ -1098,6 +1114,39 @@ export default function Index() {
       setXboxStatus('Complete!');
     }
   }, [xboxUpdates, xboxSessionId, xboxAccountsList.length]);
+
+  // Keyboard shortcuts (P=pause, S=save, Q=quit)
+  const handleShortcutPause = useCallback(() => {
+    if (activeTab === 'hotmail' && isHotmailChecking) {
+      toggleHotmailPause();
+    }
+  }, [activeTab, isHotmailChecking]);
+
+  const handleShortcutSave = useCallback(() => {
+    if (activeTab === 'hotmail' && hotmailResults.length > 0) {
+      exportHotmailHits('all');
+    } else if (activeTab === 'xbox' && allXboxCodes.length > 0) {
+      exportXboxCodes();
+    }
+  }, [activeTab, hotmailResults.length, allXboxCodes.length]);
+
+  const handleShortcutQuit = useCallback(() => {
+    if (activeTab === 'hotmail' && isHotmailChecking) {
+      cancelHotmailCheck();
+    } else if (activeTab === 'xbox' && isXboxFetching) {
+      setIsXboxFetching(false);
+      setXboxStatus('Cancelled by user');
+      toast.info('Xbox fetch cancelled');
+    }
+  }, [activeTab, isHotmailChecking, isXboxFetching]);
+
+  useKeyboardShortcuts({
+    onPause: handleShortcutPause,
+    onSave: handleShortcutSave,
+    onQuit: handleShortcutQuit,
+    enabled: isHotmailChecking || isXboxFetching
+  });
+
   const handleHotmailReset = () => {
     setHotmailResults([]);
     setHotmailProgress(0);
@@ -1164,6 +1213,16 @@ export default function Index() {
           <Button 
             variant="outline" 
             size="sm" 
+            onClick={() => navigate('/hits')}
+            className="shadow-3d"
+          >
+            <BarChart3 className="w-4 h-4 mr-2" />
+            Hits Dashboard
+          </Button>
+          
+          <Button 
+            variant="outline" 
+            size="sm" 
             onClick={handleLogout}
             className="shadow-3d"
           >
@@ -1193,7 +1252,7 @@ export default function Index() {
           </div>
         </div>
 
-        <Tabs defaultValue="dashboard" className="w-full">
+        <Tabs defaultValue="dashboard" className="w-full" onValueChange={setActiveTab}>
           <TabsList className="grid w-full max-w-4xl mx-auto grid-cols-6 glass-card mb-8">
             <TabsTrigger value="dashboard" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <LayoutDashboard className="w-4 h-4 mr-2" />
@@ -1579,6 +1638,9 @@ export default function Index() {
                         updates={xboxUpdates}
                         isConnected={xboxConnected}
                         total={xboxAccountsList.length}
+                        clientIp={clientIp}
+                        timezone={timezone}
+                        showShortcuts={isXboxFetching}
                       />
                     )}
                   </div>
@@ -1769,6 +1831,9 @@ socks5://host:port
                         updates={hotmailUpdates}
                         isConnected={hotmailConnected}
                         total={hotmailAccountsList.length}
+                        clientIp={clientIp}
+                        timezone={timezone}
+                        showShortcuts={isHotmailChecking}
                       />
                     )}
                   </div>
