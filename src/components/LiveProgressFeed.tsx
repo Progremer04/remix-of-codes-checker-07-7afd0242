@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo, useState } from 'react';
 import { ProgressUpdate } from '@/hooks/useRealtimeProgress';
-import { CheckCircle, XCircle, AlertCircle, Loader2, Lock, ShieldAlert, Zap, Wifi, WifiOff } from 'lucide-react';
+import { CheckCircle, XCircle, AlertCircle, Loader2, Lock, ShieldAlert, Zap, Wifi, WifiOff, Globe, Clock } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 
@@ -8,6 +8,9 @@ interface LiveProgressFeedProps {
   updates: ProgressUpdate[];
   isConnected: boolean;
   total: number;
+  clientIp?: string;
+  timezone?: string;
+  showShortcuts?: boolean;
 }
 
 const statusConfig = {
@@ -22,9 +25,10 @@ const statusConfig = {
   error: { icon: AlertCircle, color: 'text-gray-400', bgColor: 'bg-gray-500/10', animate: false, label: '!' },
 };
 
-export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFeedProps) {
+export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezone, showShortcuts = true }: LiveProgressFeedProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [localTime, setLocalTime] = useState(new Date().toLocaleTimeString('en-US', { hour12: false }));
 
   // Calculate stats like Python's LiveStats
   const stats = useMemo(() => {
@@ -92,6 +96,14 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
     }
   }, [updates, autoScroll]);
 
+  // Update local time every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLocalTime(new Date().toLocaleTimeString('en-US', { hour12: false }));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Detect when user manually scrolls
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
@@ -105,22 +117,38 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
 
   return (
     <div className="card-3d relative rounded-xl p-4 space-y-3 font-mono animate-fade-in">
-      {/* Python-style header bar */}
+      {/* Python-style header bar with IP/Timezone */}
       <div className="flex items-center justify-between text-xs border-b border-border/50 pb-2">
-        <div className="flex items-center gap-2">
-          <div className={cn(
-            "w-2.5 h-2.5 rounded-full transition-colors",
-            isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'
-          )} />
-          {isConnected ? (
-            <span className="text-green-400 flex items-center gap-1">
-              <Wifi className="w-3 h-3" /> Connected
-            </span>
-          ) : (
-            <span className="text-red-400 flex items-center gap-1">
-              <WifiOff className="w-3 h-3" /> Disconnected
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <div className={cn(
+              "w-2.5 h-2.5 rounded-full transition-colors",
+              isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'
+            )} />
+            {isConnected ? (
+              <span className="text-green-400 flex items-center gap-1">
+                <Wifi className="w-3 h-3" /> Connected
+              </span>
+            ) : (
+              <span className="text-red-400 flex items-center gap-1">
+                <WifiOff className="w-3 h-3" /> Disconnected
+              </span>
+            )}
+          </div>
+          
+          {/* IP Address */}
+          {clientIp && (
+            <span className="text-muted-foreground flex items-center gap-1">
+              <Globe className="w-3 h-3" />
+              {clientIp}
             </span>
           )}
+          
+          {/* Timezone/Time */}
+          <span className="text-muted-foreground flex items-center gap-1">
+            <Clock className="w-3 h-3" />
+            {localTime} {timezone && `(${timezone.split('/').pop()})`}
+          </span>
         </div>
         
         <div className="flex items-center gap-3 text-muted-foreground">
@@ -131,6 +159,19 @@ export function LiveProgressFeed({ updates, isConnected, total }: LiveProgressFe
           <span>ETA: {stats.eta}</span>
         </div>
       </div>
+
+      {/* Keyboard shortcuts hint */}
+      {showShortcuts && (
+        <div className="text-[10px] text-muted-foreground flex items-center gap-3 border-b border-border/30 pb-2">
+          <span>Shortcuts:</span>
+          <span className="px-1.5 py-0.5 bg-secondary rounded text-foreground">P</span>
+          <span>Pause</span>
+          <span className="px-1.5 py-0.5 bg-secondary rounded text-foreground">S</span>
+          <span>Save</span>
+          <span className="px-1.5 py-0.5 bg-secondary rounded text-foreground">Q</span>
+          <span>Quit</span>
+        </div>
+      )}
       
       {/* Python-style status bar with stats */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">

