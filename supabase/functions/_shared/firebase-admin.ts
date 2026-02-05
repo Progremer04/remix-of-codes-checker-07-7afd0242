@@ -115,10 +115,17 @@ export async function firebaseGet<T>(path: string): Promise<T | null> {
   try {
     const token = await getFirebaseToken();
     
-    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json?auth=${token}`);
+    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      }
+    });
     
     if (!res.ok) {
-      console.error(`Firebase GET error: ${res.status}`);
+      const errorText = await res.text();
+      console.error(`Firebase GET error: ${res.status} - ${errorText}`);
       return null;
     }
     
@@ -133,14 +140,18 @@ export async function firebaseSet(path: string, data: any): Promise<boolean> {
   try {
     const token = await getFirebaseToken();
     
-    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json?auth=${token}`, {
+    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json" 
+      },
       body: JSON.stringify(data)
     });
     
     if (!res.ok) {
-      console.error(`Firebase SET error: ${res.status}`);
+      const errorText = await res.text();
+      console.error(`Firebase SET error: ${res.status} - ${errorText}`);
       return false;
     }
     
@@ -155,14 +166,18 @@ export async function firebasePush(path: string, data: any): Promise<string | nu
   try {
     const token = await getFirebaseToken();
     
-    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json?auth=${token}`, {
+    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json" 
+      },
       body: JSON.stringify(data)
     });
     
     if (!res.ok) {
-      console.error(`Firebase PUSH error: ${res.status}`);
+      const errorText = await res.text();
+      console.error(`Firebase PUSH error: ${res.status} - ${errorText}`);
       return null;
     }
     
@@ -178,14 +193,18 @@ export async function firebaseUpdate(path: string, data: any): Promise<boolean> 
   try {
     const token = await getFirebaseToken();
     
-    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json?auth=${token}`, {
+    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json" 
+      },
       body: JSON.stringify(data)
     });
     
     if (!res.ok) {
-      console.error(`Firebase UPDATE error: ${res.status}`);
+      const errorText = await res.text();
+      console.error(`Firebase UPDATE error: ${res.status} - ${errorText}`);
       return false;
     }
     
@@ -200,12 +219,16 @@ export async function firebaseDelete(path: string): Promise<boolean> {
   try {
     const token = await getFirebaseToken();
     
-    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json?auth=${token}`, {
-      method: "DELETE"
+    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
+      method: "DELETE",
+      headers: {
+        "Authorization": `Bearer ${token}`
+      }
     });
     
     if (!res.ok) {
-      console.error(`Firebase DELETE error: ${res.status}`);
+      const errorText = await res.text();
+      console.error(`Firebase DELETE error: ${res.status} - ${errorText}`);
       return false;
     }
     
