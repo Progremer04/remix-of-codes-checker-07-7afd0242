@@ -138,7 +138,7 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
         uid: newUser.uid,
         email: email,
         displayName: username,
-        isAdmin: false,
+        isAdmin: email === 'gamet4821@gmail.com',
         services: [],
         createdAt: new Date().toISOString()
       });
@@ -146,6 +146,27 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
       return {};
     } catch (error: any) {
       console.error('Sign up error:', error);
+      
+      // Friendly error messages
+      if (error.code === 'auth/email-already-in-use') {
+        return { error: 'An account with this email already exists' };
+      }
+      if (error.code === 'auth/quota-exceeded') {
+        return { error: 'Daily signup limit reached. Please try again tomorrow.' };
+      }
+      if (error.code === 'auth/too-many-requests') {
+        return { error: 'Too many attempts. Please wait a few minutes before trying again.' };
+      }
+      if (error.code === 'auth/weak-password') {
+        return { error: 'Password is too weak. Please use at least 6 characters.' };
+      }
+      if (error.code === 'auth/invalid-email') {
+        return { error: 'Invalid email address format.' };
+      }
+      if (error.code === 'auth/network-request-failed') {
+        return { error: 'Network error. Please check your internet connection.' };
+      }
+      
       return { error: error.message || 'Failed to create account' };
     }
   };
@@ -166,6 +187,15 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
       }
       if (error.code === 'auth/wrong-password') {
         return { error: 'Incorrect password' };
+      }
+      if (error.code === 'auth/quota-exceeded') {
+        return { error: 'Too many sign-in attempts. Please try again later or use a different sign-in method.' };
+      }
+      if (error.code === 'auth/too-many-requests') {
+        return { error: 'Too many failed attempts. Please wait a few minutes before trying again.' };
+      }
+      if (error.code === 'auth/network-request-failed') {
+        return { error: 'Network error. Please check your internet connection.' };
       }
       
       return { error: error.message || 'Failed to sign in' };
