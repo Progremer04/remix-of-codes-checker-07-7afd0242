@@ -51,12 +51,30 @@ interface ManusCheckResult {
   error?: string;
 }
 
+interface SessionInfo {
+  startTime: string;
+  endTime?: string;
+  duration?: string;
+  clientIP?: string;
+  userAgent?: string;
+  timezone?: string;
+  country?: string;
+  proxyUsed?: string;
+  threadsUsed: number;
+  accountsProcessed: number;
+  successRate?: string;
+}
+
 interface HotmailCheckResult {
   email: string;
   password: string;
   status: string;
   country?: string;
   name?: string;
+  checkedAt?: string;
+  checkDuration?: number;
+  proxyUsed?: string;
+  threadId?: number;
   // Microsoft Subscriptions
   msStatus?: string;
   subscriptions?: {
@@ -147,9 +165,10 @@ export default function Index() {
   const [hotmailProgress, setHotmailProgress] = useState(0);
   const [hotmailStatus, setHotmailStatus] = useState('');
   const [hotmailResults, setHotmailResults] = useState<HotmailCheckResult[]>([]);
-  const [hotmailThreads, setHotmailThreads] = useState(5);
+  const [hotmailThreads, setHotmailThreads] = useState(10);
   const [hotmailCheckMode, setHotmailCheckMode] = useState('all');
-
+  const [hotmailProxies, setHotmailProxies] = useState('');
+  const [hotmailSessionInfo, setHotmailSessionInfo] = useState<SessionInfo | null>(null);
   const username = userData?.displayName || user?.email || 'User';
 
   // Codes Checker computed values
@@ -628,14 +647,27 @@ export default function Index() {
     setIsHotmailChecking(true);
     setHotmailResults([]);
     setHotmailProgress(0);
+    setHotmailSessionInfo(null);
     setHotmailStatus('Connecting to server...');
 
     try {
+      // Parse proxies from textarea
+      const proxyList = hotmailProxies.split('\n').map(p => p.trim()).filter(p => p.length > 0);
+      
+      // Get client info
+      const clientInfo = {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        country: navigator.language?.split('-')[1] || 'Unknown',
+        userAgent: navigator.userAgent
+      };
+
       const { data, error } = await supabase.functions.invoke('hotmail-checker', {
         body: { 
           accounts: hotmailAccountsList, 
           checkMode: hotmailCheckMode,
-          threads: hotmailThreads 
+          threads: hotmailThreads,
+          proxies: proxyList,
+          clientInfo
         }
       });
 
@@ -653,9 +685,12 @@ export default function Index() {
       }
 
       setHotmailResults(data.results);
+      setHotmailSessionInfo(data.sessionInfo);
       setHotmailProgress(hotmailAccountsList.length);
       setHotmailStatus('Complete!');
-      toast.success(`Checked ${data.stats?.total || 0} accounts, ${data.stats?.valid || 0} valid`);
+      
+      const duration = data.sessionInfo?.duration || 'N/A';
+      toast.success(`Checked ${data.stats?.total || 0} accounts in ${duration}, ${data.stats?.valid || 0} valid`);
       
       await saveHistory('hotmail_validator', hotmailAccountsList.length, data.stats, data.results);
 
@@ -671,6 +706,7 @@ export default function Index() {
     setHotmailResults([]);
     setHotmailProgress(0);
     setHotmailStatus('');
+    setHotmailSessionInfo(null);
   };
 
   // Redeem code handler
@@ -1166,13 +1202,25 @@ export default function Index() {
             
             {hasServiceAccess('hotmail_validator') && (
               <>
-                <div className="max-w-2xl mx-auto">
+                <div className="grid lg:grid-cols-2 gap-6">
                   <CodeInput
                     label="Hotmail Accounts"
                     placeholder="Enter accounts in email:password format, one per line..."
                     value={hotmailAccounts}
                     onChange={setHotmailAccounts}
                     icon={<Mail className="w-4 h-4 text-primary" />}
+                  />
+                  <CodeInput
+                    label="Proxies (Optional)"
+                    placeholder="Enter proxies - supports all formats:
+http://host:port
+host:port:user:pass
+user:pass@host:port
+socks5://host:port
+..."
+                    value={hotmailProxies}
+                    onChange={setHotmailProxies}
+                    icon={<Shield className="w-4 h-4 text-primary" />}
                   />
                 </div>
 
@@ -1184,9 +1232,9 @@ export default function Index() {
                       id="hotmailThreads"
                       type="number"
                       min={1}
-                      max={20}
+                      max={50}
                       value={hotmailThreads}
-                      onChange={(e) => setHotmailThreads(Math.max(1, Math.min(20, parseInt(e.target.value) || 5)))}
+                      onChange={(e) => setHotmailThreads(Math.max(1, Math.min(50, parseInt(e.target.value) || 10)))}
                       className="w-20 h-8 text-center"
                     />
                   </div>
@@ -1195,7 +1243,7 @@ export default function Index() {
                     <ShoppingCart className="w-4 h-4 text-primary" />
                     <Label className="text-sm">Check Mode:</Label>
                     <Select value={hotmailCheckMode} onValueChange={setHotmailCheckMode}>
-                      <SelectTrigger className="w-32 h-8">
+                      <SelectTrigger className="w-36 h-8">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1255,6 +1303,42 @@ export default function Index() {
 
                 {hotmailResults.length > 0 && (
                   <>
+                    {/* Session Info Panel (Canary Style) */}
+                    {hotmailSessionInfo && (
+                      <div className="glass-card p-4 rounded-xl border border-primary/20 font-mono text-xs">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Clock className="w-4 h-4 text-primary" />
+                          <span className="text-primary font-semibold">SESSION INFO</span>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-muted-foreground">
+                          <div>
+                            <span className="text-foreground">Started:</span> {hotmailSessionInfo.startTime}
+                          </div>
+                          <div>
+                            <span className="text-foreground">Duration:</span> {hotmailSessionInfo.duration}
+                          </div>
+                          <div>
+                            <span className="text-foreground">Threads:</span> {hotmailSessionInfo.threadsUsed}
+                          </div>
+                          <div>
+                            <span className="text-foreground">Success Rate:</span> <span className="text-success">{hotmailSessionInfo.successRate}</span>
+                          </div>
+                          <div>
+                            <span className="text-foreground">Processed:</span> {hotmailSessionInfo.accountsProcessed} accounts
+                          </div>
+                          <div>
+                            <span className="text-foreground">Proxy:</span> {hotmailSessionInfo.proxyUsed}
+                          </div>
+                          <div>
+                            <span className="text-foreground">Timezone:</span> {hotmailSessionInfo.timezone}
+                          </div>
+                          <div>
+                            <span className="text-foreground">Client IP:</span> {hotmailSessionInfo.clientIP?.substring(0, 20)}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Stats Grid */}
                     <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
                       <StatsCard
