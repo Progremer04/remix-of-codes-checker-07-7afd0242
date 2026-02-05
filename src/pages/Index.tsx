@@ -736,6 +736,8 @@ export default function Index() {
     setXboxResults([]);
     setXboxProgress(0);
     setXboxStatus('');
+    clearXboxUpdates();
+    setXboxSessionId(null);
   };
 
   // Export Xbox codes
@@ -1157,6 +1159,7 @@ export default function Index() {
     setHotmailSessionInfo(null);
     setIsHotmailPaused(false);
     clearHotmailUpdates();
+    setHotmailSessionId(null);
   };
 
   // Redeem code handler
@@ -1167,12 +1170,12 @@ export default function Index() {
     }
     
     setIsRedeeming(true);
-    const { error, services } = await redeemCode(redeemCodeInput);
+    const { error, services, codeName } = await redeemCode(redeemCodeInput);
     
     if (error) {
       toast.error(error);
     } else {
-      toast.success(`Code redeemed! Access granted to: ${services?.join(', ')}`);
+      toast.success(`Code "${codeName}" redeemed! Access granted to: ${services?.join(', ')}`);
       setRedeemCodeInput('');
     }
     setIsRedeeming(false);
@@ -1636,16 +1639,33 @@ export default function Index() {
                       total={xboxAccountsList.length}
                       status={xboxStatus}
                     />
-                    {(isXboxFetching || xboxUpdates.length > 0) && (
+                {/* Always show live feed if there are updates (persists until reset) */}
+                    {xboxUpdates.length > 0 && (
                       <LiveProgressFeed 
                         updates={xboxUpdates}
                         isConnected={xboxConnected}
-                        total={xboxAccountsList.length}
+                        total={xboxAccountsList.length || xboxUpdates[0]?.total || 1}
                         clientIp={clientIp}
                         timezone={timezone}
                         showShortcuts={isXboxFetching}
+                        onClear={handleXboxReset}
                       />
                     )}
+                  </div>
+                )}
+                
+                {/* Show live feed even after progress is done if there are updates */}
+                {!isXboxFetching && xboxProgress === 0 && xboxUpdates.length > 0 && (
+                  <div className="max-w-2xl mx-auto">
+                    <LiveProgressFeed 
+                      updates={xboxUpdates}
+                      isConnected={xboxConnected}
+                      total={xboxUpdates[0]?.total || xboxUpdates.length}
+                      clientIp={clientIp}
+                      timezone={timezone}
+                      showShortcuts={false}
+                      onClear={handleXboxReset}
+                    />
                   </div>
                 )}
 
@@ -1839,16 +1859,33 @@ socks5://host:port
                       total={hotmailAccountsList.length}
                       status={hotmailStatus}
                     />
-                    {(isHotmailChecking || hotmailUpdates.length > 0) && (
+                    {/* Always show live feed if there are updates (persists until reset) */}
+                    {hotmailUpdates.length > 0 && (
                       <LiveProgressFeed 
                         updates={hotmailUpdates}
                         isConnected={hotmailConnected}
-                        total={hotmailAccountsList.length}
+                        total={hotmailAccountsList.length || hotmailUpdates[0]?.total || 1}
                         clientIp={clientIp}
                         timezone={timezone}
                         showShortcuts={isHotmailChecking}
+                        onClear={handleHotmailReset}
                       />
                     )}
+                  </div>
+                )}
+                
+                {/* Show live feed even after progress is done if there are updates */}
+                {!isHotmailChecking && hotmailProgress === 0 && hotmailUpdates.length > 0 && (
+                  <div className="max-w-2xl mx-auto">
+                    <LiveProgressFeed 
+                      updates={hotmailUpdates}
+                      isConnected={hotmailConnected}
+                      total={hotmailUpdates[0]?.total || hotmailUpdates.length}
+                      clientIp={clientIp}
+                      timezone={timezone}
+                      showShortcuts={false}
+                      onClear={handleHotmailReset}
+                    />
                   </div>
                 )}
 
