@@ -510,7 +510,8 @@ export default function Index() {
 
       if (error) {
         console.error('Edge function error:', error);
-        toast.error('Server connection error');
+        const errorMsg = error.message || 'Server connection error';
+        toast.error(errorMsg.includes('Failed to fetch') ? 'Network error - please check your connection' : errorMsg);
         setIsClaiming(false);
         return;
       }
@@ -566,7 +567,8 @@ export default function Index() {
 
       if (error) {
         console.error('Edge function error:', error);
-        toast.error('Server connection error');
+        const errorMsg = error.message || 'Server connection error';
+        toast.error(errorMsg.includes('Failed to fetch') ? 'Network error - please check your connection' : errorMsg);
         setIsXboxFetching(false);
         return;
       }
@@ -635,8 +637,17 @@ export default function Index() {
       });
 
       if (error) {
-        console.error('Edge function error:', error);
-        toast.error('Server connection error');
+        console.error('Manus Edge function error:', error, 'Error details:', JSON.stringify(error));
+        const errorMsg = error.message || 'Server connection error';
+        toast.error(errorMsg.includes('Failed to fetch') ? 'Network error - please check your connection' : errorMsg);
+        setIsManusChecking(false);
+        return;
+      }
+
+      console.log('Manus response:', data);
+
+      if (!data) {
+        toast.error('Empty response from server');
         setIsManusChecking(false);
         return;
       }
@@ -756,8 +767,17 @@ export default function Index() {
       });
 
       if (error) {
-        console.error('Edge function error:', error);
-        toast.error('Server connection error');
+        console.error('Hotmail Edge function error:', error, 'Error details:', JSON.stringify(error));
+        const errorMsg = error.message || 'Server connection error';
+        toast.error(errorMsg.includes('Failed to fetch') ? 'Network error - please check your connection' : errorMsg);
+        setIsHotmailChecking(false);
+        return;
+      }
+
+      console.log('Hotmail response:', data);
+
+      if (!data) {
+        toast.error('Empty response from server');
         setIsHotmailChecking(false);
         return;
       }
