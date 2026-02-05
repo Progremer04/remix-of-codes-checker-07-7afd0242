@@ -840,14 +840,14 @@ serve(async (req) => {
         const [email, ...passParts] = account.split(":");
         const password = passParts.join(":");
         
-        // Broadcast "checking" status
+        // Broadcast "checking" status like Python
         if (sessionId) {
-          broadcastProgress(sessionId, {
+          await broadcastProgress(sessionId, {
             index: index + 1,
             total: accounts.length,
             email: email || account,
             status: 'checking',
-            message: `Checking ${email}...`,
+            message: `⟳ Checking...`,
             timestamp: Date.now()
           }).catch(() => {});
         }
@@ -855,12 +855,12 @@ serve(async (req) => {
         if (!email || !password) {
           const result = { email: account, password: "", status: "error", error: "Invalid format", threadId } as CheckResult;
           if (sessionId) {
-            broadcastProgress(sessionId, {
+            await broadcastProgress(sessionId, {
               index: index + 1,
               total: accounts.length,
               email: account,
               status: 'failed',
-              message: 'Invalid format',
+              message: '✗ Invalid format',
               timestamp: Date.now()
             }).catch(() => {});
           }
@@ -869,14 +869,64 @@ serve(async (req) => {
         
         const result = await checkAccount(email.trim(), password.trim(), checkMode, threadId);
         
-        // Broadcast result status
+        // Build Python-style detailed message for hits
+        let message = result.status;
+        if (result.status === 'valid') {
+          const parts: string[] = ['✓ Valid'];
+          
+          // Microsoft subscriptions
+          if (result.msStatus === 'PREMIUM' && result.subscriptions?.length) {
+            const activeSubs = result.subscriptions.filter(s => !s.isExpired);
+            for (const sub of activeSubs.slice(0, 2)) {
+              parts.push(`🎮${sub.name}${sub.daysRemaining ? `(${sub.daysRemaining}d)` : ''}`);
+            }
+          }
+          
+          // PSN
+          if (result.psn?.status === 'HAS_ORDERS') {
+            const purchase = result.psn.purchases?.[0]?.item;
+            parts.push(`🎯PSN:${result.psn.orders}${purchase ? `(${purchase.substring(0, 20)})` : ''}`);
+          }
+          
+          // Steam
+          if (result.steam?.status === 'HAS_PURCHASES') {
+            parts.push(`🎲Steam:${result.steam.count}`);
+          }
+          
+          // Supercell
+          if (result.supercell?.status === 'LINKED') {
+            parts.push(`⚔️${result.supercell.games.join(',')}`);
+          }
+          
+          // TikTok
+          if (result.tiktok?.status === 'LINKED') {
+            parts.push(`📱TikTok`);
+          }
+          
+          // Minecraft
+          if (result.minecraft?.status === 'OWNED') {
+            parts.push(`⛏️MC:${result.minecraft.username || 'Yes'}`);
+          }
+          
+          message = parts.join(' | ');
+        } else if (result.status === '2fa') {
+          message = '🔐 2FA Required';
+        } else if (result.status === 'locked') {
+          message = '🔒 Account Locked';
+        } else if (result.status === 'invalid') {
+          message = '✗ Invalid';
+        } else if (result.status === 'error') {
+          message = `! Error: ${result.error || 'Unknown'}`;
+        }
+        
+        // Broadcast result with detailed message
         if (sessionId) {
-          broadcastProgress(sessionId, {
+          await broadcastProgress(sessionId, {
             index: index + 1,
             total: accounts.length,
             email: email,
             status: result.status as any,
-            message: result.status === 'valid' ? 'Valid account!' : result.status,
+            message,
             timestamp: Date.now()
           }).catch(() => {});
         }
