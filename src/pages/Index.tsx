@@ -242,8 +242,8 @@ export default function Index() {
     return userServices.includes(service);
   };
 
-  // Save history to Firebase
-  const saveHistory = async (service: string, inputCount: number, stats: any) => {
+  // Save history to Firebase with full results
+  const saveHistory = async (service: string, inputCount: number, stats: any, results?: any[]) => {
     if (!user) return;
     
     try {
@@ -255,6 +255,7 @@ export default function Index() {
         service,
         inputCount,
         stats,
+        results: results || [],
         createdAt: new Date().toISOString()
       });
     } catch (e) {
@@ -379,7 +380,7 @@ export default function Index() {
           used: resultsAccumulator.filter(r => r.status === 'used').length,
           expired: resultsAccumulator.filter(r => r.status === 'expired').length,
           invalid: resultsAccumulator.filter(r => r.status === 'invalid').length,
-        });
+        }, resultsAccumulator);
       } else {
         const data = await response.json();
         
@@ -405,7 +406,7 @@ export default function Index() {
           used: newResults.filter(r => r.status === 'used').length,
           expired: newResults.filter(r => r.status === 'expired').length,
           invalid: newResults.filter(r => r.status === 'invalid').length,
-        });
+        }, newResults);
       }
     } catch (err) {
       console.error('Error:', err);
@@ -456,7 +457,7 @@ export default function Index() {
       setClaimStatus('Complete!');
       toast.success(`Successfully processed ${accountsList.length} accounts`);
       
-      await saveHistory('wlid_claimer', accountsList.length, data.stats);
+      await saveHistory('wlid_claimer', accountsList.length, data.stats, data.results);
 
     } catch (err) {
       console.error('Error:', err);
@@ -512,7 +513,7 @@ export default function Index() {
       setXboxStatus('Complete!');
       toast.success(`Found ${data.stats?.totalCodes || 0} codes from ${data.stats?.success || 0} accounts`);
       
-      await saveHistory('xbox_fetcher', xboxAccountsList.length, data.stats);
+      await saveHistory('xbox_fetcher', xboxAccountsList.length, data.stats, data.results);
 
     } catch (err) {
       console.error('Error:', err);
@@ -568,7 +569,7 @@ export default function Index() {
       setManusStatus('Complete!');
       toast.success(`Checked ${data.stats?.total || 0} accounts, ${data.stats?.success || 0} valid`);
       
-      await saveHistory('manus_checker', manusCookiesList.length, data.stats);
+      await saveHistory('manus_checker', manusCookiesList.length, data.stats, data.results);
 
     } catch (err) {
       console.error('Error:', err);
@@ -628,7 +629,7 @@ export default function Index() {
       setHotmailStatus('Complete!');
       toast.success(`Checked ${data.stats?.total || 0} accounts, ${data.stats?.valid || 0} valid`);
       
-      await saveHistory('hotmail_validator', hotmailAccountsList.length, data.stats);
+      await saveHistory('hotmail_validator', hotmailAccountsList.length, data.stats, data.results);
 
     } catch (err) {
       console.error('Error:', err);
