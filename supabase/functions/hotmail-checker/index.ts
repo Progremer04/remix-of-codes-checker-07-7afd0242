@@ -1048,8 +1048,7 @@ serve(async (req) => {
 
     // Save history to Firebase if user is authenticated
     if (userId && saveHistory) {
-      EdgeRuntime.waitUntil(firebasePush('checkHistory', {
-        userId,
+      EdgeRuntime.waitUntil(firebasePush(`users/${userId}/checkHistory`, {
         service: "hotmail_validator",
         checkMode,
         inputCount: accounts.length,
@@ -1058,6 +1057,26 @@ serve(async (req) => {
         results: allResults,
         createdAt: new Date().toISOString()
       }));
+
+      // Push live hits for valid accounts with premium features
+      const premiumHits = allResults.filter(r => 
+        r.status === 'valid' && (r.msStatus === 'PREMIUM' || r.psn?.status === 'HAS_ORDERS' || r.steam?.status === 'HAS_PURCHASES' || r.minecraft?.status === 'OWNED')
+      );
+      
+      for (const hit of premiumHits.slice(0, 10)) {
+        EdgeRuntime.waitUntil(firebasePush('liveHits', {
+          service: 'hotmail_validator',
+          username: userEmail || 'anonymous',
+          hitData: {
+            email: hit.email,
+            msStatus: hit.msStatus,
+            psn: hit.psn?.orders,
+            steam: hit.steam?.count,
+            minecraft: hit.minecraft?.username,
+          },
+          createdAt: Date.now()
+        }));
+      }
     }
 
     return new Response(

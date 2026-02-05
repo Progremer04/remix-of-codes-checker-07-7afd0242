@@ -484,12 +484,26 @@ serve(async (req) => {
 
     // Save history to Firebase
     if (userId) {
-      await firebasePush(`checkHistory/${userId}`, {
+      await firebasePush(`users/${userId}/checkHistory`, {
         service: "xbox_fetcher",
         inputCount: accounts.length,
         stats,
         createdAt: new Date().toISOString()
       });
+
+      // Push live hits for accounts with codes
+      const hitsWithCodes = results.filter(r => r.status === 'success' && r.codes.length > 0);
+      for (const hit of hitsWithCodes.slice(0, 10)) {
+        firebasePush('liveHits', {
+          service: 'xbox_fetcher',
+          username: username || 'anonymous',
+          hitData: {
+            email: hit.email,
+            codes: hit.codes,
+          },
+          createdAt: Date.now()
+        }).catch(() => {});
+      }
     }
 
     return new Response(
