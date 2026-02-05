@@ -767,7 +767,7 @@ export default function Index() {
     toast.success(`Downloaded ${hits.length} hits as ZIP`);
   };
 
-  // Hotmail Checker functions - Process in chunks to avoid CPU timeout
+  // Hotmail Checker - Background processing mode
   const checkHotmailAccounts = async () => {
     if (!hasServiceAccess('hotmail_validator')) {
       toast.error('You need to redeem a code to access Hotmail Validator');
@@ -786,18 +786,9 @@ export default function Index() {
     setHotmailResults([]);
     setHotmailProgress(0);
     setHotmailSessionInfo(null);
-    
+    setHotmailStatus(`Starting check of ${hotmailAccountsList.length} accounts...`);
+
     const startTime = Date.now();
-    const totalAccounts = hotmailAccountsList.length;
-    
-    // Process in chunks to avoid CPU timeout (50 accounts per chunk)
-    const CHUNK_SIZE = 50;
-    const chunks: string[][] = [];
-    for (let i = 0; i < totalAccounts; i += CHUNK_SIZE) {
-      chunks.push(hotmailAccountsList.slice(i, i + CHUNK_SIZE));
-    }
-    
-    setHotmailStatus(`Processing ${totalAccounts} accounts in ${chunks.length} batches...`);
 
     try {
       const proxyList = hotmailProxies.split('\n').map(p => p.trim()).filter(p => p.length > 0);
@@ -807,102 +798,96 @@ export default function Index() {
         userAgent: navigator.userAgent
       };
 
-      const allResults: HotmailCheckResult[] = [];
-      const stats = {
-        total: totalAccounts,
-        valid: 0,
-        invalid: 0,
-        twoFa: 0,
-        locked: 0,
-        error: 0,
-        msPremium: 0,
-        psnHits: 0,
-        steamHits: 0,
-        supercellHits: 0,
-        tiktokHits: 0,
-        minecraftHits: 0
-      };
+      // This returns immediately - processing happens in background
+      const { data, error } = await invokeBackendFunction<any>('hotmail-checker', {
+        accounts: hotmailAccountsList,
+        checkMode: hotmailCheckMode,
+        threads: hotmailThreads,
+        proxies: proxyList,
+        clientInfo,
+        sessionId,
+      });
 
-      // Process each chunk sequentially
-      for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-        const chunk = chunks[chunkIndex];
-        const chunkStart = chunkIndex * CHUNK_SIZE;
-        
-        setHotmailStatus(`Batch ${chunkIndex + 1}/${chunks.length} (${chunkStart + 1}-${Math.min(chunkStart + chunk.length, totalAccounts)}/${totalAccounts})`);
-
-        const { data, error } = await invokeBackendFunction<any>('hotmail-checker', {
-          accounts: chunk,
-          checkMode: hotmailCheckMode,
-          threads: Math.min(hotmailThreads, chunk.length),
-          proxies: proxyList,
-          clientInfo,
-          sessionId,
-          chunkIndex,
-          totalChunks: chunks.length,
-          globalOffset: chunkStart,
-          globalTotal: totalAccounts
-        });
-
-        if (error) {
-          console.error('Hotmail chunk error:', error);
-          // Continue with next chunk instead of stopping
-          toast.error(`Batch ${chunkIndex + 1} failed: ${error.message}`);
-          continue;
-        }
-
-        if (data?.results) {
-          allResults.push(...data.results);
-          
-          // Update stats
-          for (const result of data.results) {
-            if (result.status === 'valid') stats.valid++;
-            else if (result.status === 'invalid') stats.invalid++;
-            else if (result.status === '2fa') stats.twoFa++;
-            else if (result.status === 'locked') stats.locked++;
-            else stats.error++;
-            
-            if (result.msStatus === 'PREMIUM') stats.msPremium++;
-            if (result.psn?.status === 'HAS_ORDERS') stats.psnHits++;
-            if (result.steam?.status === 'HAS_PURCHASES') stats.steamHits++;
-            if (result.supercell?.status === 'LINKED') stats.supercellHits++;
-            if (result.tiktok?.status === 'LINKED') stats.tiktokHits++;
-            if (result.minecraft?.status === 'OWNED') stats.minecraftHits++;
-          }
-        }
-
-        setHotmailResults([...allResults]);
-        setHotmailProgress(allResults.length);
+      if (error) {
+        console.error('Hotmail Edge function error:', error);
+        toast.error(error.message || 'Server connection error');
+        setIsHotmailChecking(false);
+        return;
       }
 
-      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-      const sessionInfo: SessionInfo = {
-        startTime: new Date(startTime).toISOString(),
-        endTime: new Date().toISOString(),
-        duration: `${duration}s`,
-        threadsUsed: hotmailThreads,
-        accountsProcessed: totalAccounts,
-        successRate: `${((stats.valid / totalAccounts) * 100).toFixed(1)}%`
-      };
-
-      setHotmailSessionInfo(sessionInfo);
-      setHotmailStatus('Complete!');
+      console.log('Hotmail background job started:', data);
       
-      toast.success(`Checked ${totalAccounts} accounts in ${duration}s, ${stats.valid} valid`);
-      await saveHistory('hotmail_validator', totalAccounts, stats, allResults);
+      if (data?.status === 'processing') {
+        toast.success(`Processing ${data.total} accounts in background. Watch the live feed!`);
+        setHotmailStatus(`Processing ${data.total} accounts...`);
+        
+        // The realtime updates will come through the useRealtimeProgress hook
+        // We'll collect results from the updates
+      } else if (data?.error) {
+        toast.error(data.error);
+        setIsHotmailChecking(false);
+        return;
+      }
 
     } catch (err) {
       console.error('Error:', err);
       toast.error('An unexpected error occurred');
-    } finally {
       setIsHotmailChecking(false);
     }
   };
+
+  // Watch for completion in realtime updates
+  useEffect(() => {
+    if (!isHotmailChecking || hotmailUpdates.length === 0) return;
+    
+    const lastUpdate = hotmailUpdates[hotmailUpdates.length - 1];
+    
+    // Update progress
+    const completed = hotmailUpdates.filter(u => u.status !== 'checking').length;
+    setHotmailProgress(completed);
+    
+    // Check for completion message
+    if (lastUpdate?.email === 'COMPLETE' || lastUpdate?.message?.includes('Done!')) {
+      setIsHotmailChecking(false);
+      setHotmailStatus('Complete!');
+      
+      // Build results from updates
+      const results: HotmailCheckResult[] = hotmailUpdates
+        .filter(u => u.email !== 'COMPLETE' && u.status !== 'checking')
+        .map(u => ({
+          email: u.email,
+          password: '',
+          status: u.status,
+        }));
+      
+      setHotmailResults(results);
+      
+      // Calculate stats from updates
+      const valid = hotmailUpdates.filter(u => u.status === 'valid' || u.status === 'success').length;
+      const invalid = hotmailUpdates.filter(u => u.status === 'invalid' || u.status === 'failed').length;
+      const twoFa = hotmailUpdates.filter(u => u.status === '2fa').length;
+      
+      const duration = ((Date.now() - (hotmailUpdates[0]?.timestamp || Date.now())) / 1000).toFixed(1);
+      
+      setHotmailSessionInfo({
+        startTime: new Date(hotmailUpdates[0]?.timestamp || Date.now()).toISOString(),
+        endTime: new Date().toISOString(),
+        duration: `${duration}s`,
+        threadsUsed: hotmailThreads,
+        accountsProcessed: hotmailUpdates.filter(u => u.email !== 'COMPLETE').length,
+        successRate: `${((valid / Math.max(results.length, 1)) * 100).toFixed(1)}%`
+      });
+      
+      toast.success(`Complete! ${valid} valid, ${invalid} invalid, ${twoFa} 2FA`);
+    }
+  }, [hotmailUpdates, isHotmailChecking]);
 
   const handleHotmailReset = () => {
     setHotmailResults([]);
     setHotmailProgress(0);
     setHotmailStatus('');
     setHotmailSessionInfo(null);
+    clearHotmailUpdates();
   };
 
   // Redeem code handler
