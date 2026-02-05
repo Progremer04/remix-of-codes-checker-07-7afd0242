@@ -13,6 +13,7 @@ import { ProgressBar } from '@/components/ProgressBar';
 import { Background3D } from '@/components/Background3D';
 import { UserDashboard } from '@/components/UserDashboard';
 import { ManusFileUpload, UploadedFile } from '@/components/ManusFileUpload';
+import { LiveProgressFeed } from '@/components/LiveProgressFeed';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -24,6 +25,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useFirebaseAuth } from '@/hooks/useFirebaseAuth';
 import { ref, push, set } from 'firebase/database';
 import { database } from '@/integrations/firebase/config';
+import { useRealtimeProgress, generateSessionId } from '@/hooks/useRealtimeProgress';
 import JSZip from 'jszip';
 
 interface ClaimResult {
@@ -191,6 +193,17 @@ export default function Index() {
   const [hotmailCheckMode, setHotmailCheckMode] = useState('all');
   const [hotmailProxies, setHotmailProxies] = useState('');
   const [hotmailSessionInfo, setHotmailSessionInfo] = useState<SessionInfo | null>(null);
+  
+  // Realtime progress session IDs
+  const [hotmailSessionId, setHotmailSessionId] = useState<string | null>(null);
+  const [xboxSessionId, setXboxSessionId] = useState<string | null>(null);
+  const [manusSessionId, setManusSessionId] = useState<string | null>(null);
+  
+  // Realtime progress hooks
+  const { updates: hotmailUpdates, isConnected: hotmailConnected, clearUpdates: clearHotmailUpdates } = useRealtimeProgress(hotmailSessionId);
+  const { updates: xboxUpdates, isConnected: xboxConnected, clearUpdates: clearXboxUpdates } = useRealtimeProgress(xboxSessionId);
+  const { updates: manusUpdates, isConnected: manusConnected, clearUpdates: clearManusUpdates } = useRealtimeProgress(manusSessionId);
+  
   const username = userData?.displayName || user?.email || 'User';
 
   // Codes Checker computed values
@@ -578,6 +591,9 @@ export default function Index() {
       return;
     }
 
+    const sessionId = generateSessionId();
+    setXboxSessionId(sessionId);
+    clearXboxUpdates();
     setIsXboxFetching(true);
     setXboxResults([]);
     setXboxProgress(0);
@@ -588,6 +604,7 @@ export default function Index() {
         accounts: xboxAccountsList,
         threads: xboxThreads,
         username,
+        sessionId,
       });
 
       if (error) {
@@ -762,6 +779,9 @@ export default function Index() {
       return;
     }
 
+    const sessionId = generateSessionId();
+    setHotmailSessionId(sessionId);
+    clearHotmailUpdates();
     setIsHotmailChecking(true);
     setHotmailResults([]);
     setHotmailProgress(0);
@@ -785,6 +805,7 @@ export default function Index() {
         threads: hotmailThreads,
         proxies: proxyList,
         clientInfo,
+        sessionId,
       });
 
       if (error) {
@@ -1265,12 +1286,19 @@ export default function Index() {
                 </div>
 
                 {(isXboxFetching || xboxProgress > 0) && (
-                  <div className="max-w-2xl mx-auto">
+                  <div className="max-w-2xl mx-auto space-y-4">
                     <ProgressBar
                       current={xboxProgress}
                       total={xboxAccountsList.length}
                       status={xboxStatus}
                     />
+                    {isXboxFetching && (
+                      <LiveProgressFeed 
+                        updates={xboxUpdates}
+                        isConnected={xboxConnected}
+                        total={xboxAccountsList.length}
+                      />
+                    )}
                   </div>
                 )}
 
@@ -1417,12 +1445,19 @@ socks5://host:port
                 </div>
 
                 {(isHotmailChecking || hotmailProgress > 0) && (
-                  <div className="max-w-2xl mx-auto">
+                  <div className="max-w-2xl mx-auto space-y-4">
                     <ProgressBar
                       current={hotmailProgress}
                       total={hotmailAccountsList.length}
                       status={hotmailStatus}
                     />
+                    {isHotmailChecking && (
+                      <LiveProgressFeed 
+                        updates={hotmailUpdates}
+                        isConnected={hotmailConnected}
+                        total={hotmailAccountsList.length}
+                      />
+                    )}
                   </div>
                 )}
 

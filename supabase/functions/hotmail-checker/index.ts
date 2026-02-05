@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { firebasePush, firebaseGet, verifyFirebaseIdToken } from "../_shared/firebase-admin.ts";
+import { broadcastProgress } from "../_shared/realtime-broadcast.ts";
 
 declare const EdgeRuntime: {
   waitUntil(promise: Promise<unknown>): void;
@@ -7,7 +8,7 @@ declare const EdgeRuntime: {
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token, x-client-ip",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token, x-client-ip, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 interface SubscriptionInfo {
@@ -784,7 +785,8 @@ serve(async (req) => {
       checkMode = "all", 
       threads = 5, 
       saveHistory = true,
-      clientInfo = {}
+      clientInfo = {},
+      sessionId = null
     } = await req.json();
 
     console.log(`${sessionStartTime} ═══════════════════════════════════════════════`);
@@ -837,10 +839,49 @@ serve(async (req) => {
       async (account: string, index: number, threadId: number) => {
         const [email, ...passParts] = account.split(":");
         const password = passParts.join(":");
-        if (!email || !password) {
-          return { email: account, password: "", status: "error", error: "Invalid format", threadId } as CheckResult;
+        
+        // Broadcast "checking" status
+        if (sessionId) {
+          broadcastProgress(sessionId, {
+            index: index + 1,
+            total: accounts.length,
+            email: email || account,
+            status: 'checking',
+            message: `Checking ${email}...`,
+            timestamp: Date.now()
+          }).catch(() => {});
         }
-        return await checkAccount(email.trim(), password.trim(), checkMode, threadId);
+        
+        if (!email || !password) {
+          const result = { email: account, password: "", status: "error", error: "Invalid format", threadId } as CheckResult;
+          if (sessionId) {
+            broadcastProgress(sessionId, {
+              index: index + 1,
+              total: accounts.length,
+              email: account,
+              status: 'failed',
+              message: 'Invalid format',
+              timestamp: Date.now()
+            }).catch(() => {});
+          }
+          return result;
+        }
+        
+        const result = await checkAccount(email.trim(), password.trim(), checkMode, threadId);
+        
+        // Broadcast result status
+        if (sessionId) {
+          broadcastProgress(sessionId, {
+            index: index + 1,
+            total: accounts.length,
+            email: email,
+            status: result.status as any,
+            message: result.status === 'valid' ? 'Valid account!' : result.status,
+            timestamp: Date.now()
+          }).catch(() => {});
+        }
+        
+        return result;
       },
       (completed, total, result) => {
         if (result.status === "valid") stats.valid++;

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { firebasePush, verifyFirebaseIdToken, firebaseGet } from "../_shared/firebase-admin.ts";
+import { broadcastProgress } from "../_shared/realtime-broadcast.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,6 +12,7 @@ interface FetchRequest {
   accounts: string[];
   threads?: number;
   username?: string;
+  sessionId?: string;
 }
 
 interface FetchResult {
@@ -371,7 +373,7 @@ serve(async (req) => {
       if (tokenData) userId = tokenData.uid;
     }
 
-    const { accounts, threads = 5, username }: FetchRequest = await req.json();
+    const { accounts, threads = 5, username, sessionId }: FetchRequest = await req.json();
 
     if (userId) {
       const userData = await firebaseGet<{ services?: string[]; isAdmin?: boolean }>(`users/${userId}`);
@@ -398,7 +400,35 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "No valid accounts" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const results = await processWithWorkerPool(parsedAccounts, Math.min(threads, 20), async (acc, idx) => processAccount(acc.email, acc.password, idx + 1, parsedAccounts.length));
+    const results = await processWithWorkerPool(parsedAccounts, Math.min(threads, 20), async (acc, idx) => {
+      // Broadcast "checking" status
+      if (sessionId) {
+        broadcastProgress(sessionId, {
+          index: idx + 1,
+          total: parsedAccounts.length,
+          email: acc.email,
+          status: 'checking',
+          message: `Checking ${acc.email}...`,
+          timestamp: Date.now()
+        }).catch(() => {});
+      }
+      
+      const result = await processAccount(acc.email, acc.password, idx + 1, parsedAccounts.length);
+      
+      // Broadcast result
+      if (sessionId) {
+        broadcastProgress(sessionId, {
+          index: idx + 1,
+          total: parsedAccounts.length,
+          email: acc.email,
+          status: result.status === 'success' ? 'success' : result.status === 'no_codes' ? 'no_codes' : 'failed',
+          message: result.message,
+          timestamp: Date.now()
+        }).catch(() => {});
+      }
+      
+      return result;
+    });
 
     const stats = {
       total: results.length,
