@@ -395,47 +395,69 @@ interface ExtraDataItem {
 function parseExtraData(message: string): ExtraDataItem[] {
   const items: ExtraDataItem[] = [];
   
-  if (message.includes('GAME PASS') || message.includes('M365') || message.includes('PREMIUM')) {
-    const match = message.match(/(GAME PASS[^|]*|M365[^|]*|PREMIUM[^|]*)/i);
-    items.push({
-      icon: '🎮',
-      label: match ? match[1].trim().substring(0, 25) : 'PREMIUM',
-      color: 'text-purple-300',
-      bgColor: 'bg-purple-500/20'
-    });
+  // Microsoft Subscriptions (Game Pass, M365, etc.)
+  // Match patterns like: 🎮GAME PASS ULTIMATE(180d) | 🎮M365 BASIC(90d)
+  const subMatches = message.matchAll(/🎮([^|()]+)(?:\((\d+)d\))?/g);
+  for (const match of subMatches) {
+    const name = match[1]?.trim() || 'Premium';
+    const days = match[2] ? `(${match[2]}d)` : '';
+    // Skip if it's Steam (uses same emoji sometimes)
+    if (!name.toLowerCase().includes('steam')) {
+      items.push({
+        icon: '🎮',
+        label: `${name}${days}`.substring(0, 25),
+        color: 'text-purple-300',
+        bgColor: 'bg-purple-500/20'
+      });
+    }
   }
   
-  if (message.includes('PSN') || message.includes('PlayStation')) {
-    const match = message.match(/PSN[:\s]*(\d+)/i);
+  // Also check for PREMIUM/GAME PASS text without emoji
+  if (items.length === 0 && (message.includes('GAME PASS') || message.includes('M365') || message.includes('PREMIUM'))) {
+    const match = message.match(/(GAME PASS[^|]*|M365[^|]*|PREMIUM[^|]*)/i);
+    if (match) {
+      items.push({
+        icon: '🎮',
+        label: match[1].trim().substring(0, 25),
+        color: 'text-purple-300',
+        bgColor: 'bg-purple-500/20'
+      });
+    }
+  }
+  
+  // PlayStation Network - format: 🎯PSN:3 or PSN:3
+  const psnMatch = message.match(/(?:🎯)?PSN[:\s]*(\d+)/i);
+  if (psnMatch) {
     items.push({
       icon: '🎯',
-      label: match ? `PSN:${match[1]}` : 'PSN',
+      label: `PSN: ${psnMatch[1]} orders`,
       color: 'text-blue-300',
       bgColor: 'bg-blue-500/20'
     });
   }
   
-  if (message.includes('Steam')) {
-    const match = message.match(/Steam[:\s]*(\d+)/i);
+  // Steam - format: 🎮Steam:5 or Steam:5
+  const steamMatch = message.match(/(?:🎮)?Steam[:\s]*(\d+)/i);
+  if (steamMatch) {
     items.push({
       icon: '🎲',
-      label: match ? `Steam:${match[1]}` : 'Steam',
+      label: `Steam: ${steamMatch[1]} purchases`,
       color: 'text-cyan-300',
       bgColor: 'bg-cyan-500/20'
     });
   }
   
-  if (message.includes('Minecraft') || message.includes('MC:')) {
-    const match = message.match(/(?:MC:|Minecraft[:\s]*)(\w+)/i);
+  // Supercell - format: 🎲SC:CoC,BS or SC:Yes
+  const scMatch = message.match(/(?:🎲)?SC[:\s]*([^|]+)/i);
+  if (scMatch) {
+    const games = scMatch[1].trim();
     items.push({
-      icon: '⛏️',
-      label: match ? match[1].substring(0, 15) : 'Minecraft',
-      color: 'text-green-300',
-      bgColor: 'bg-green-500/20'
+      icon: '⚔️',
+      label: games === 'Yes' ? 'Supercell' : `SC: ${games}`.substring(0, 20),
+      color: 'text-yellow-300',
+      bgColor: 'bg-yellow-500/20'
     });
-  }
-  
-  if (message.includes('Supercell') || message.includes('SC:') || message.includes('CoC') || message.includes('Clash')) {
+  } else if (message.includes('Supercell') || message.includes('CoC') || message.includes('Clash')) {
     items.push({
       icon: '⚔️',
       label: 'Supercell',
@@ -444,24 +466,58 @@ function parseExtraData(message: string): ExtraDataItem[] {
     });
   }
   
-  if (message.includes('TikTok')) {
-    const match = message.match(/TikTok[:\s]*(\w+)/i);
+  // TikTok - format: 📱TikTok:Yes or 📱TikTok:username
+  const tiktokMatch = message.match(/(?:📱)?TikTok[:\s]*(\S+)/i);
+  if (tiktokMatch) {
+    const username = tiktokMatch[1].trim();
     items.push({
       icon: '📱',
-      label: match ? `TikTok:${match[1].substring(0, 10)}` : 'TikTok',
+      label: username === 'Yes' ? 'TikTok: Yes' : `TikTok: @${username}`.substring(0, 20),
       color: 'text-pink-300',
       bgColor: 'bg-pink-500/20'
     });
   }
   
-  if (message.includes('Keywords') || message.includes('🔑')) {
-    const match = message.match(/Keywords[:\s]*([^|]+)/i);
+  // Minecraft - format: ⛏️MC:username or MC:Yes
+  const mcMatch = message.match(/(?:⛏️)?MC[:\s]*(\S+)/i);
+  if (mcMatch) {
+    const username = mcMatch[1].trim();
+    items.push({
+      icon: '⛏️',
+      label: username === 'Yes' ? 'Minecraft' : `MC: ${username}`.substring(0, 18),
+      color: 'text-green-300',
+      bgColor: 'bg-green-500/20'
+    });
+  } else if (message.includes('Minecraft')) {
+    const match = message.match(/Minecraft[:\s]*(\w+)/i);
+    items.push({
+      icon: '⛏️',
+      label: match ? `MC: ${match[1]}`.substring(0, 18) : 'Minecraft',
+      color: 'text-green-300',
+      bgColor: 'bg-green-500/20'
+    });
+  }
+  
+  // Inbox Keywords - format: 🔑Keywords:gog:6,steam:3 or 🔑gog:6
+  const kwMatch = message.match(/(?:🔑)(?:Keywords[:\s]*)?([^|]+)/i);
+  if (kwMatch) {
+    const keywords = kwMatch[1].trim();
     items.push({
       icon: '🔑',
-      label: match ? match[1].trim().substring(0, 30) : 'Keywords',
+      label: keywords.substring(0, 25),
       color: 'text-amber-300',
       bgColor: 'bg-amber-500/20'
     });
+  } else if (message.includes('Keywords')) {
+    const match = message.match(/Keywords[:\s]*([^|]+)/i);
+    if (match) {
+      items.push({
+        icon: '🔑',
+        label: match[1].trim().substring(0, 25),
+        color: 'text-amber-300',
+        bgColor: 'bg-amber-500/20'
+      });
+    }
   }
   
   return items;
