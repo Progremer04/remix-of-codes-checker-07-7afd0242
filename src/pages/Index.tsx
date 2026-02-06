@@ -16,6 +16,7 @@ import { UserDashboard } from '@/components/UserDashboard';
 import { ManusFileUpload, UploadedFile } from '@/components/ManusFileUpload';
 import { LiveProgressFeed } from '@/components/LiveProgressFeed';
 import { KeywordsInput } from '@/components/KeywordsInput';
+import { MiniProgressPlayer } from '@/components/MiniProgressPlayer';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -28,6 +29,7 @@ import { useFirebaseAuth } from '@/hooks/useFirebaseAuth';
 import { ref, push, set } from 'firebase/database';
 import { database } from '@/integrations/firebase/config';
 import { useRealtimeProgress, generateSessionId } from '@/hooks/useRealtimeProgress';
+import { useSessionPersistence } from '@/hooks/useSessionPersistence';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import JSZip from 'jszip';
 
@@ -212,6 +214,13 @@ export default function Index() {
   const { updates: xboxUpdates, isConnected: xboxConnected, clearUpdates: clearXboxUpdates } = useRealtimeProgress(xboxSessionId);
   const { updates: manusUpdates, isConnected: manusConnected, clearUpdates: clearManusUpdates } = useRealtimeProgress(manusSessionId);
   
+  // Session persistence for crash recovery
+  const { saveSession, getLastSession, clearSession } = useSessionPersistence();
+  
+  // Mini player visibility states
+  const [showMiniPlayer, setShowMiniPlayer] = useState(true);
+  const [activeService, setActiveService] = useState<string | null>(null);
+  
   // Client info for session display
   const [clientIp, setClientIp] = useState<string>('');
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -223,6 +232,38 @@ export default function Index() {
       .then(data => setClientIp(data.ip || ''))
       .catch(() => setClientIp('Unknown'));
   }, []);
+  
+  // Auto-save session progress to localStorage
+  useEffect(() => {
+    if (hotmailSessionId && hotmailUpdates.length > 0) {
+      const total = hotmailUpdates[0]?.total || hotmailUpdates.length;
+      saveSession(hotmailSessionId, 'hotmail_validator', hotmailUpdates, total);
+      setActiveService('hotmail_validator');
+    }
+  }, [hotmailSessionId, hotmailUpdates, saveSession]);
+  
+  useEffect(() => {
+    if (xboxSessionId && xboxUpdates.length > 0) {
+      const total = xboxUpdates[0]?.total || xboxUpdates.length;
+      saveSession(xboxSessionId, 'xbox_fetcher', xboxUpdates, total);
+      setActiveService('xbox_fetcher');
+    }
+  }, [xboxSessionId, xboxUpdates, saveSession]);
+  
+  // Restore last session on mount if exists
+  useEffect(() => {
+    const lastHotmail = getLastSession('hotmail_validator');
+    if (lastHotmail && !lastHotmail.isComplete && !hotmailSessionId) {
+      toast.info(`Found previous Hotmail session (${lastHotmail.updates.length} updates). Showing in mini player.`);
+      setActiveService('hotmail_validator');
+    }
+    
+    const lastXbox = getLastSession('xbox_fetcher');
+    if (lastXbox && !lastXbox.isComplete && !xboxSessionId) {
+      toast.info(`Found previous Xbox session (${lastXbox.updates.length} updates). Showing in mini player.`);
+      setActiveService('xbox_fetcher');
+    }
+  }, [getLastSession, hotmailSessionId, xboxSessionId]);
   
   // Active tab for keyboard shortcuts context
   const [activeTab, setActiveTab] = useState('codes');
@@ -2317,6 +2358,29 @@ socks5://host:port
           </TabsContent>
         </Tabs>
       </main>
+      
+      {/* Mini Progress Player - Spotify style */}
+      {showMiniPlayer && activeService && (
+        <MiniProgressPlayer
+          sessionId={
+            activeService === 'hotmail_validator' ? hotmailSessionId :
+            activeService === 'xbox_fetcher' ? xboxSessionId :
+            null
+          }
+          service={activeService}
+          updates={
+            activeService === 'hotmail_validator' ? hotmailUpdates :
+            activeService === 'xbox_fetcher' ? xboxUpdates :
+            []
+          }
+          isConnected={
+            activeService === 'hotmail_validator' ? hotmailConnected :
+            activeService === 'xbox_fetcher' ? xboxConnected :
+            false
+          }
+          onClose={() => setShowMiniPlayer(false)}
+        />
+      )}
     </div>
   );
 }
