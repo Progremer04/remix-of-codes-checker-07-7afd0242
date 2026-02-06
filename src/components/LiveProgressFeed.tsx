@@ -31,30 +31,37 @@ export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezo
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [localTime, setLocalTime] = useState(new Date().toLocaleTimeString('en-US', { hour12: false }));
-  
+
+  // The backend sends a final "COMPLETE" row. It must NOT count toward progress,
+  // otherwise it can skew percentages and (previously) overwrite the last account.
+  const accountUpdates = useMemo(
+    () => updates.filter((u) => u.email !== 'COMPLETE'),
+    [updates]
+  );
+
   // Check if processing is complete - based on actual total, not updates length
   const isComplete = useMemo(() => {
-    if (updates.length === 0 || total <= 0) return false;
-    const nonChecking = updates.filter(u => u.status !== 'checking').length;
+    if (accountUpdates.length === 0 || total <= 0) return false;
+    const nonChecking = accountUpdates.filter((u) => u.status !== 'checking').length;
     // Consider complete when all items are done (not checking)
     return nonChecking >= total;
-  }, [updates, total]);
+  }, [accountUpdates, total]);
 
   // Calculate stats like Python's LiveStats
   const stats = useMemo(() => {
-    const checking = updates.filter(u => u.status === 'checking').length;
-    const completed = updates.filter(u => u.status !== 'checking');
-    const hits = completed.filter(u => u.status === 'valid' || u.status === 'success').length;
-    const twoFa = completed.filter(u => u.status === '2fa').length;
-    const locked = completed.filter(u => u.status === 'locked').length;
-    const bads = completed.filter(u => u.status === 'invalid' || u.status === 'failed').length;
-    const errors = completed.filter(u => u.status === 'error').length;
-    const noCodes = completed.filter(u => u.status === 'no_codes').length;
+    const checking = accountUpdates.filter((u) => u.status === 'checking').length;
+    const completed = accountUpdates.filter((u) => u.status !== 'checking');
+    const hits = completed.filter((u) => u.status === 'valid' || u.status === 'success').length;
+    const twoFa = completed.filter((u) => u.status === '2fa').length;
+    const locked = completed.filter((u) => u.status === 'locked').length;
+    const bads = completed.filter((u) => u.status === 'invalid' || u.status === 'failed').length;
+    const errors = completed.filter((u) => u.status === 'error').length;
+    const noCodes = completed.filter((u) => u.status === 'no_codes').length;
 
     // Calculate CPM (checks per minute)
     const now = Date.now();
     const windowMs = 60_000;
-    const windowCompleted = completed.filter(u => u.timestamp >= now - windowMs);
+    const windowCompleted = completed.filter((u) => u.timestamp >= now - windowMs);
     let cpm = 0;
     if (windowCompleted.length >= 2) {
       const first = windowCompleted[0];
@@ -88,12 +95,12 @@ export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezo
       // Use actual total passed in, not updates length
       percentage: total > 0 ? Math.round((completed.length / total) * 100) : 0
     };
-  }, [updates, total]);
+  }, [accountUpdates, total]);
 
   // Format elapsed time
   const getElapsedTime = () => {
-    if (updates.length < 2) return "00:00";
-    const elapsed = Math.floor((updates[updates.length - 1].timestamp - updates[0].timestamp) / 1000);
+    if (accountUpdates.length < 2) return "00:00";
+    const elapsed = Math.floor((accountUpdates[accountUpdates.length - 1].timestamp - accountUpdates[0].timestamp) / 1000);
     const mins = Math.floor(elapsed / 60).toString().padStart(2, '0');
     const secs = (elapsed % 60).toString().padStart(2, '0');
     return `${mins}:${secs}`;

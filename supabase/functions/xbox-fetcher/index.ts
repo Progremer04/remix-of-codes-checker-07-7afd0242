@@ -434,9 +434,9 @@ async function processAccountsBackground(
   log(`═══════════════════════════════════════════════`);
   log(`COMPLETE | Duration: ${duration} | Success: ${stats.success} | Codes: ${stats.totalCodes}`);
 
-  // Broadcast completion
+  // Broadcast completion (use a non-colliding index so it never overwrites the last account)
   await broadcastProgress(sessionId, {
-    index: total,
+    index: total + 1,
     total,
     email: 'COMPLETE',
     status: 'success',
