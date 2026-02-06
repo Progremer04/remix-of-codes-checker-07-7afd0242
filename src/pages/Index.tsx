@@ -40,6 +40,7 @@ interface ClaimResult {
 
 interface XboxFetchResult {
   email: string;
+  password?: string;
   status: string;
   codes: string[];
   message: string;
@@ -247,18 +248,19 @@ export default function Index() {
     total: checkResults.length,
   }), [checkResults]);
 
+  // Format: CODE | TITLE (if title exists) - matching Python output
   const validResults = useMemo(() => 
-    checkResults.filter(r => r.status === 'valid').map(r => r.title ? `${r.code} | ${r.title}` : r.code),
+    checkResults.filter(r => r.status === 'valid').map(r => r.title && r.title !== 'N/A' ? `${r.code} | ${r.title}` : r.code),
     [checkResults]
   );
 
   const usedResults = useMemo(() => 
-    checkResults.filter(r => r.status === 'used').map(r => r.code),
+    checkResults.filter(r => r.status === 'used').map(r => r.title && r.title !== 'N/A' ? `${r.code} | ${r.title}` : r.code),
     [checkResults]
   );
 
   const expiredResults = useMemo(() => 
-    checkResults.filter(r => r.status === 'expired').map(r => r.title ? `${r.code} | ${r.title}` : r.code),
+    checkResults.filter(r => r.status === 'expired').map(r => r.title && r.title !== 'N/A' ? `${r.code} | ${r.title}` : r.code),
     [checkResults]
   );
 
@@ -300,11 +302,26 @@ export default function Index() {
     noCodes: (xboxResults || []).filter(r => r.status === 'no_codes').length,
     failed: (xboxResults || []).filter(r => !['success', 'no_codes'].includes(r.status)).length,
     totalCodes: (xboxResults || []).reduce((sum, r) => sum + (r.codes?.length || 0), 0),
+    valid: (xboxResults || []).filter(r => r.status === 'success' || r.status === 'no_codes').length,
     total: (xboxResults || []).length,
   }), [xboxResults]);
 
   const allXboxCodes = useMemo(() => 
     (xboxResults || []).flatMap(r => r.codes || []),
+    [xboxResults]
+  );
+  
+  // Accounts with codes (format: email:password | CODES: code1, code2...)
+  const xboxAccountsWithCodes = useMemo(() => 
+    (xboxResults || []).filter(r => r.status === 'success' && r.codes?.length > 0)
+      .map(r => `${r.email}${r.password ? ':' + r.password : ''} | CODES: ${r.codes.join(', ')}`),
+    [xboxResults]
+  );
+  
+  // Valid accounts (working but no codes)
+  const xboxValidAccounts = useMemo(() => 
+    (xboxResults || []).filter(r => r.status === 'no_codes')
+      .map(r => `${r.email}${r.password ? ':' + r.password : ''} | Working (no codes)`),
     [xboxResults]
   );
 
@@ -1706,11 +1723,26 @@ export default function Index() {
                       />
                     </div>
 
+                    <div className="grid lg:grid-cols-2 gap-4">
+                      <ResultCard
+                        title="Accounts With Codes"
+                        icon={<Gift className="w-5 h-5" />}
+                        items={xboxAccountsWithCodes}
+                        colorClass="text-success"
+                      />
+                      <ResultCard
+                        title="Valid Accounts (No Codes)"
+                        icon={<CheckCircle className="w-5 h-5" />}
+                        items={xboxValidAccounts}
+                        colorClass="text-blue-500"
+                      />
+                    </div>
+                    
                     <ResultCard
-                      title="All Xbox Codes"
+                      title="All Codes"
                       icon={<Gamepad2 className="w-5 h-5" />}
                       items={allXboxCodes}
-                      colorClass="text-success"
+                      colorClass="text-primary"
                     />
                   </>
                 )}

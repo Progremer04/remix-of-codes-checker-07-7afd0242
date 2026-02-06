@@ -32,11 +32,12 @@ export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezo
   const [autoScroll, setAutoScroll] = useState(true);
   const [localTime, setLocalTime] = useState(new Date().toLocaleTimeString('en-US', { hour12: false }));
   
-  // Check if processing is complete
+  // Check if processing is complete - based on actual total, not updates length
   const isComplete = useMemo(() => {
-    if (updates.length === 0) return false;
-    const completed = updates.filter(u => u.status !== 'checking').length;
-    return completed >= total;
+    if (updates.length === 0 || total <= 0) return false;
+    const nonChecking = updates.filter(u => u.status !== 'checking').length;
+    // Consider complete when all items are done (not checking)
+    return nonChecking >= total;
   }, [updates, total]);
 
   // Calculate stats like Python's LiveStats
@@ -84,6 +85,7 @@ export function LiveProgressFeed({ updates, isConnected, total, clientIp, timezo
       noCodes,
       cpm,
       eta,
+      // Use actual total passed in, not updates length
       percentage: total > 0 ? Math.round((completed.length / total) * 100) : 0
     };
   }, [updates, total]);
