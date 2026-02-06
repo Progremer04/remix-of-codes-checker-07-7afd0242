@@ -21,7 +21,6 @@ interface FetchRequest {
 
 interface FetchResult {
   email: string;
-  password: string;
   status: 'success' | 'no_codes' | 'auth_failed' | 'login_failed' | 'xbox_tokens_failed' | 'error';
   codes: string[];
   message: string;
@@ -314,7 +313,7 @@ async function processAccount(email: string, password: string, idx: number, tota
 
       if (!ppft || !urlPost) {
         if (attempt === 1) {
-          return { email, password, status: 'auth_failed', codes: [], message: `[${idx}/${total}] ❌ ${email.substring(0, 25)}... - OAuth failed` };
+          return { email, status: 'auth_failed', codes: [], message: `[${idx}/${total}] ❌ ${email.substring(0, 25)}... - OAuth failed` };
         }
         await new Promise(r => setTimeout(r, 1000));
         continue;
@@ -324,7 +323,7 @@ async function processAccount(email: string, password: string, idx: number, tota
 
       if (!rpsToken) {
         if (attempt === 1) {
-          return { email, password, status: 'login_failed', codes: [], message: `[${idx}/${total}] ❌ ${email.substring(0, 25)}... - Login failed` };
+          return { email, status: 'login_failed', codes: [], message: `[${idx}/${total}] ❌ ${email.substring(0, 25)}... - Login failed` };
         }
         await new Promise(r => setTimeout(r, 1000));
         continue;
@@ -336,7 +335,7 @@ async function processAccount(email: string, password: string, idx: number, tota
 
       if (!uhs || !xstsToken) {
         if (attempt === 1) {
-          return { email, password, status: 'xbox_tokens_failed', codes: [], message: `[${idx}/${total}] ❌ ${email.substring(0, 25)}... - Xbox tokens failed` };
+          return { email, status: 'xbox_tokens_failed', codes: [], message: `[${idx}/${total}] ❌ ${email.substring(0, 25)}... - Xbox tokens failed` };
         }
         await new Promise(r => setTimeout(r, 1000));
         continue;
@@ -345,19 +344,19 @@ async function processAccount(email: string, password: string, idx: number, tota
       const codes = await fetchCodes(uhs, xstsToken);
 
       if (codes.length > 0) {
-        return { email, password, status: 'success', codes, message: `[${idx}/${total}] ✅ ${email.substring(0, 25)}... - ${codes.length} codes!` };
+        return { email, status: 'success', codes, message: `[${idx}/${total}] ✅ ${email.substring(0, 25)}... - ${codes.length} codes!` };
       } else {
-        return { email, password, status: 'no_codes', codes: [], message: `[${idx}/${total}] ⚠️ ${email.substring(0, 25)}... - Working, no codes` };
+        return { email, status: 'no_codes', codes: [], message: `[${idx}/${total}] ⚠️ ${email.substring(0, 25)}... - Working, no codes` };
       }
     } catch (e) {
       if (attempt === 1) {
-        return { email, password, status: 'error', codes: [], message: `[${idx}/${total}] ❌ ${email.substring(0, 25)}... - Error` };
+        return { email, status: 'error', codes: [], message: `[${idx}/${total}] ❌ ${email.substring(0, 25)}... - Error` };
       }
       await new Promise(r => setTimeout(r, 1000));
     }
   }
 
-  return { email, password, status: 'error', codes: [], message: `[${idx}/${total}] ❌ ${email.substring(0, 25)}... - All attempts failed` };
+  return { email, status: 'error', codes: [], message: `[${idx}/${total}] ❌ ${email.substring(0, 25)}... - All attempts failed` };
 }
 
 // Background processing function
@@ -397,12 +396,11 @@ async function processAccountsBackground(
       const result = await processAccount(acc.email, acc.password, idx + 1, total);
       results[idx] = result;
       
-      // Broadcast result with password for UI display
+      // Broadcast result
       await broadcastProgress(sessionId, {
         index: idx + 1,
         total,
         email: acc.email,
-        password: acc.password,
         status: result.status === 'success' ? 'success' : result.status === 'no_codes' ? 'no_codes' : 'failed',
         message: result.message,
         timestamp: Date.now()
@@ -434,9 +432,9 @@ async function processAccountsBackground(
   log(`═══════════════════════════════════════════════`);
   log(`COMPLETE | Duration: ${duration} | Success: ${stats.success} | Codes: ${stats.totalCodes}`);
 
-  // Broadcast completion (use a non-colliding index so it never overwrites the last account)
+  // Broadcast completion
   await broadcastProgress(sessionId, {
-    index: total + 1,
+    index: total,
     total,
     email: 'COMPLETE',
     status: 'success',
@@ -444,12 +442,11 @@ async function processAccountsBackground(
     timestamp: Date.now()
   }).catch(() => {});
 
-  // Save FULL results (including all codes and passwords) to Firebase history
+  // Save FULL results (including all codes) to Firebase history
   if (userId) {
     // Filter non-null results and create full result entries
     const fullResults = results.filter(r => r != null).map(r => ({
       email: r.email,
-      password: r.password,
       status: r.status,
       codes: r.codes || [],
       message: r.message

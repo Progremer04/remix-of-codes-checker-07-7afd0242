@@ -4,12 +4,10 @@ import { firebasePush, firebaseGet, verifyFirebaseIdToken } from "../_shared/fir
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-firebase-token, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
 interface CheckRequest {
   cookies: string[];
-  filenames?: string[];
   threads?: number;
   username?: string;
   clientInfo?: {
@@ -35,7 +33,6 @@ interface CheckResult {
   timestamp: string;
   checkDuration?: number;
   threadId?: number;
-  cookieContent?: string; // Store full cookie content for hits
 }
 
 interface SessionInfo {
@@ -396,9 +393,9 @@ function getClientIP(req: Request): string {
 }
 
 serve(async (req) => {
-  // Handle CORS preflight - MUST return 200 OK status
+  // Handle CORS preflight
   if (req.method === "OPTIONS") {
-    return new Response("ok", { status: 200, headers: corsHeaders });
+    return new Response(null, { headers: corsHeaders });
   }
 
   const requestId = generateRequestId();
@@ -421,7 +418,7 @@ serve(async (req) => {
       }
     }
 
-    const { cookies, filenames = [], threads = 10, username, clientInfo }: CheckRequest = await req.json();
+    const { cookies, threads = 10, username, clientInfo }: CheckRequest = await req.json();
 
     // Check service access if authenticated
     if (userId) {
@@ -448,24 +445,12 @@ serve(async (req) => {
       );
     }
 
-    // Process with thread limit - pass original cookie content for hits
+    // Process with thread limit
     const concurrency = Math.min(threads, 50);
-    const cookieData = cookies.map((cookie, idx) => ({
-      content: cookie,
-      filename: filenames[idx] || `cookie_${idx + 1}.txt`
-    }));
-    
     const results = await processWithWorkerPool(
-      cookieData,
+      cookies,
       concurrency,
-      async (data, idx, threadId) => {
-        const result = await checkSingleAccount(data.content, data.filename, idx, threadId, requestId);
-        // Attach full cookie content for successful hits
-        if (result.status === 'success') {
-          result.cookieContent = data.content;
-        }
-        return result;
-      },
+      async (cookie, idx, threadId) => checkSingleAccount(cookie, `cookie_${idx + 1}.txt`, idx, threadId, requestId),
       requestId
     );
 
@@ -529,7 +514,7 @@ serve(async (req) => {
         createdAt: new Date().toISOString()
       }).catch(e => console.error(`${getCanaryTimestamp()} [${requestId}] Firebase history save error:`, e));
 
-      // Save HITS separately under adminData (admin only path) - INCLUDE FULL COOKIE CONTENT
+      // Save HITS separately under adminData (admin only path)
       if (successResults.length > 0) {
         firebasePush(`adminData/manusHits/${userId}`, {
           requestId,
@@ -542,8 +527,6 @@ serve(async (req) => {
             freeCredits: r.freeCredits,
             usedCredits: r.usedCredits,
             timestamp: r.timestamp,
-            filename: r.filename,
-            cookieContent: r.cookieContent, // Full cookie file content for export
           })),
           count: successResults.length,
           checkedAt: new Date().toISOString()
@@ -558,8 +541,6 @@ serve(async (req) => {
               email: hit.email,
               plan: hit.plan,
               totalCredits: hit.totalCredits,
-              filename: hit.filename,
-              cookieContent: hit.cookieContent, // Include cookie content for live hits
             },
             createdAt: Date.now()
           }).catch(() => {});

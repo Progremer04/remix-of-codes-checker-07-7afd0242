@@ -16,7 +16,6 @@ import { UserDashboard } from '@/components/UserDashboard';
 import { ManusFileUpload, UploadedFile } from '@/components/ManusFileUpload';
 import { LiveProgressFeed } from '@/components/LiveProgressFeed';
 import { KeywordsInput } from '@/components/KeywordsInput';
-import { MiniProgressPlayer } from '@/components/MiniProgressPlayer';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -29,7 +28,6 @@ import { useFirebaseAuth } from '@/hooks/useFirebaseAuth';
 import { ref, push, set } from 'firebase/database';
 import { database } from '@/integrations/firebase/config';
 import { useRealtimeProgress, generateSessionId } from '@/hooks/useRealtimeProgress';
-import { useSessionPersistence } from '@/hooks/useSessionPersistence';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import JSZip from 'jszip';
 
@@ -42,7 +40,6 @@ interface ClaimResult {
 
 interface XboxFetchResult {
   email: string;
-  password?: string;
   status: string;
   codes: string[];
   message: string;
@@ -63,7 +60,6 @@ interface ManusCheckResult {
   timestamp?: string;
   checkDuration?: number;
   threadId?: number;
-  cookieContent?: string; // Full cookie content for export
 }
 
 interface ManusSessionInfo {
@@ -214,17 +210,6 @@ export default function Index() {
   const { updates: xboxUpdates, isConnected: xboxConnected, clearUpdates: clearXboxUpdates } = useRealtimeProgress(xboxSessionId);
   const { updates: manusUpdates, isConnected: manusConnected, clearUpdates: clearManusUpdates } = useRealtimeProgress(manusSessionId);
   
-  // Session persistence for crash recovery
-  const { saveSession, getLastSession, clearSession } = useSessionPersistence();
-  
-  // Mini player visibility states - support multiple services running at once
-  const [showMiniPlayer, setShowMiniPlayer] = useState(true);
-  const [activeServices, setActiveServices] = useState<string[]>([]);
-  const [primaryMiniPlayerService, setPrimaryMiniPlayerService] = useState<string | null>(null);
-  
-  // Track if we've already saved hits for a session (prevent duplicate saves)
-  const [savedSessions, setSavedSessions] = useState<Set<string>>(new Set());
-  
   // Client info for session display
   const [clientIp, setClientIp] = useState<string>('');
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -236,54 +221,6 @@ export default function Index() {
       .then(data => setClientIp(data.ip || ''))
       .catch(() => setClientIp('Unknown'));
   }, []);
-  
-  // Auto-save session progress to localStorage
-  useEffect(() => {
-    if (hotmailSessionId && hotmailUpdates.length > 0) {
-      try {
-        const total = hotmailUpdates[0]?.total || hotmailUpdates.length;
-        saveSession(hotmailSessionId, 'hotmail_validator', hotmailUpdates, total);
-        setActiveServices(prev => prev.includes('hotmail_validator') ? prev : [...prev, 'hotmail_validator']);
-        if (!primaryMiniPlayerService) setPrimaryMiniPlayerService('hotmail_validator');
-      } catch (e) {
-        console.error('Failed to save hotmail session:', e);
-      }
-    }
-  }, [hotmailSessionId, hotmailUpdates, saveSession]);
-  
-  useEffect(() => {
-    if (xboxSessionId && xboxUpdates.length > 0) {
-      try {
-        const total = xboxUpdates[0]?.total || xboxUpdates.length;
-        saveSession(xboxSessionId, 'xbox_fetcher', xboxUpdates, total);
-        setActiveServices(prev => prev.includes('xbox_fetcher') ? prev : [...prev, 'xbox_fetcher']);
-        if (!primaryMiniPlayerService) setPrimaryMiniPlayerService('xbox_fetcher');
-      } catch (e) {
-        console.error('Failed to save xbox session:', e);
-      }
-    }
-  }, [xboxSessionId, xboxUpdates, saveSession, primaryMiniPlayerService]);
-  
-  // Restore last session on mount if exists
-  useEffect(() => {
-    try {
-      const lastHotmail = getLastSession('hotmail_validator');
-      if (lastHotmail && !lastHotmail.isComplete && !hotmailSessionId) {
-        toast.info(`Found previous Hotmail session (${lastHotmail.updates.length} updates). Showing in mini player.`);
-        setActiveServices(prev => prev.includes('hotmail_validator') ? prev : [...prev, 'hotmail_validator']);
-        setPrimaryMiniPlayerService('hotmail_validator');
-      }
-      
-      const lastXbox = getLastSession('xbox_fetcher');
-      if (lastXbox && !lastXbox.isComplete && !xboxSessionId) {
-        toast.info(`Found previous Xbox session (${lastXbox.updates.length} updates). Showing in mini player.`);
-        setActiveServices(prev => prev.includes('xbox_fetcher') ? prev : [...prev, 'xbox_fetcher']);
-        if (!primaryMiniPlayerService) setPrimaryMiniPlayerService('xbox_fetcher');
-      }
-    } catch (e) {
-      console.error('Failed to restore sessions:', e);
-    }
-  }, [getLastSession, hotmailSessionId, xboxSessionId, primaryMiniPlayerService]);
   
   // Active tab for keyboard shortcuts context
   const [activeTab, setActiveTab] = useState('codes');
@@ -309,19 +246,18 @@ export default function Index() {
     total: checkResults.length,
   }), [checkResults]);
 
-  // Format: CODE | TITLE (if title exists) - matching Python output
   const validResults = useMemo(() => 
-    checkResults.filter(r => r.status === 'valid').map(r => r.title && r.title !== 'N/A' ? `${r.code} | ${r.title}` : r.code),
+    checkResults.filter(r => r.status === 'valid').map(r => r.title ? `${r.code} | ${r.title}` : r.code),
     [checkResults]
   );
 
   const usedResults = useMemo(() => 
-    checkResults.filter(r => r.status === 'used').map(r => r.title && r.title !== 'N/A' ? `${r.code} | ${r.title}` : r.code),
+    checkResults.filter(r => r.status === 'used').map(r => r.code),
     [checkResults]
   );
 
   const expiredResults = useMemo(() => 
-    checkResults.filter(r => r.status === 'expired').map(r => r.title && r.title !== 'N/A' ? `${r.code} | ${r.title}` : r.code),
+    checkResults.filter(r => r.status === 'expired').map(r => r.title ? `${r.code} | ${r.title}` : r.code),
     [checkResults]
   );
 
@@ -363,26 +299,11 @@ export default function Index() {
     noCodes: (xboxResults || []).filter(r => r.status === 'no_codes').length,
     failed: (xboxResults || []).filter(r => !['success', 'no_codes'].includes(r.status)).length,
     totalCodes: (xboxResults || []).reduce((sum, r) => sum + (r.codes?.length || 0), 0),
-    valid: (xboxResults || []).filter(r => r.status === 'success' || r.status === 'no_codes').length,
     total: (xboxResults || []).length,
   }), [xboxResults]);
 
   const allXboxCodes = useMemo(() => 
     (xboxResults || []).flatMap(r => r.codes || []),
-    [xboxResults]
-  );
-  
-  // Accounts with codes (format: email:password | CODES: code1, code2...)
-  const xboxAccountsWithCodes = useMemo(() => 
-    (xboxResults || []).filter(r => r.status === 'success' && r.codes?.length > 0)
-      .map(r => `${r.email}${r.password ? ':' + r.password : ''} | CODES: ${r.codes.join(', ')}`),
-    [xboxResults]
-  );
-  
-  // Valid accounts (working but no codes)
-  const xboxValidAccounts = useMemo(() => 
-    (xboxResults || []).filter(r => r.status === 'no_codes')
-      .map(r => `${r.email}${r.password ? ':' + r.password : ''} | Working (no codes)`),
     [xboxResults]
   );
 
@@ -815,12 +736,6 @@ export default function Index() {
     setXboxResults([]);
     setXboxProgress(0);
     setXboxStatus('');
-    clearXboxUpdates();
-    setXboxSessionId(null);
-    setActiveServices(prev => prev.filter(s => s !== 'xbox_fetcher'));
-    if (primaryMiniPlayerService === 'xbox_fetcher') {
-      setPrimaryMiniPlayerService(activeServices.find(s => s !== 'xbox_fetcher') || null);
-    }
   };
 
   // Export Xbox codes
@@ -868,14 +783,8 @@ export default function Index() {
         userAgent: navigator.userAgent
       };
 
-      // Pass filenames along with cookies so backend can return them with results
-      const filenames = manusUploadedFiles.length > 0 
-        ? manusUploadedFiles.map(f => f.name)
-        : manusCookiesList.map((_, i) => `cookie_${i + 1}.txt`);
-
       const { data, error } = await invokeBackendFunction<any>('manus-checker', {
         cookies: manusCookiesList,
-        filenames,
         threads: manusThreads,
         username,
         clientInfo,
@@ -951,17 +860,16 @@ export default function Index() {
       const credits = hit.totalCredits || '0';
       const filename = `[${email}][${plan}][${credits}].txt`;
       
-      // Use cookieContent from backend response if available (preferred)
-      let originalContent: string | null = hit.cookieContent || null;
+      // Find original cookie content by filename or index
+      // Results come back in order, so we can match by index from filename (cookie_1.txt, cookie_2.txt, etc.)
+      let originalContent: string | null = null;
       
-      // Fallback: try to match by filename pattern (cookie_N.txt) from uploaded files
-      if (!originalContent) {
-        const indexMatch = hit.filename?.match(/cookie_(\d+)\.txt/);
-        if (indexMatch && manusUploadedFiles.length > 0) {
-          const idx = parseInt(indexMatch[1], 10) - 1;
-          if (idx >= 0 && idx < manusUploadedFiles.length) {
-            originalContent = manusUploadedFiles[idx].content;
-          }
+      // Try to match by filename pattern (cookie_N.txt)
+      const indexMatch = hit.filename?.match(/cookie_(\d+)\.txt/);
+      if (indexMatch && manusUploadedFiles.length > 0) {
+        const idx = parseInt(indexMatch[1], 10) - 1;
+        if (idx >= 0 && idx < manusUploadedFiles.length) {
+          originalContent = manusUploadedFiles[idx].content;
         }
       }
       
@@ -1125,168 +1033,90 @@ export default function Index() {
     toast.success(`Downloaded ${items.length} ${type} hits`);
   };
 
-  // Watch for completion in realtime updates (Hotmail) - auto-save hits to Firebase
+  // Watch for completion in realtime updates (Hotmail)
   useEffect(() => {
-    if (hotmailUpdates.length === 0) return;
+    if (!isHotmailChecking || hotmailUpdates.length === 0) return;
 
-    try {
-      const lastUpdate = hotmailUpdates[hotmailUpdates.length - 1];
+    const lastUpdate = hotmailUpdates[hotmailUpdates.length - 1];
 
-      // Update progress
-      const completed = hotmailUpdates.filter(u => u.status !== 'checking').length;
-      setHotmailProgress(completed);
+    // Update progress
+    const completed = hotmailUpdates.filter(u => u.status !== 'checking').length;
+    setHotmailProgress(completed);
 
-      // Build live results from updates for real-time UI
-      const liveResults: HotmailCheckResult[] = hotmailUpdates
-        .filter(u => u.email !== 'COMPLETE' && u.status !== 'checking')
-        .map(u => {
-          // Parse the message to extract service info
-          const msg = u.message || '';
-          const result: HotmailCheckResult = {
-            email: u.email,
-            password: u.password || '',
-            status: u.status,
-          };
-
-          // Parse subscription info from message
-          if (msg.includes('GAME PASS') || msg.includes('M365')) {
-            result.msStatus = 'PREMIUM';
-          }
-          if (msg.includes('PSN:')) {
-            result.psn = { status: 'HAS_ORDERS', orders: parseInt(msg.match(/PSN:(\d+)/)?.[1] || '0'), purchases: [] };
-          }
-          if (msg.includes('Steam:')) {
-            result.steam = { status: 'HAS_PURCHASES', count: parseInt(msg.match(/Steam:(\d+)/)?.[1] || '0') };
-          }
-          if (msg.includes('TikTok:')) {
-            result.tiktok = { status: 'LINKED', username: msg.match(/TikTok:([^\s|]+)/)?.[1] || '' };
-          }
-          if (msg.includes('MC:')) {
-            result.minecraft = { status: 'OWNED', username: msg.match(/MC:([^\s|]+)/)?.[1] || '' };
-          }
-          if (msg.includes('SC:') || msg.includes('Supercell')) {
-            result.supercell = { status: 'LINKED', games: [] };
-          }
-
-          return result;
-        });
-
-      setHotmailResults(liveResults);
-
-      // Check for completion message
-      if (lastUpdate?.email === 'COMPLETE' || lastUpdate?.message?.includes('Done!')) {
-        setIsHotmailChecking(false);
-        setIsHotmailPaused(false);
-        setHotmailStatus('Complete!');
-
-        // Calculate stats from updates
-        const valid = hotmailUpdates.filter(u => u.status === 'valid' || u.status === 'success').length;
-        const invalid = hotmailUpdates.filter(u => u.status === 'invalid' || u.status === 'failed').length;
-        const twoFa = hotmailUpdates.filter(u => u.status === '2fa').length;
-        const locked = hotmailUpdates.filter(u => u.status === 'locked').length;
-
-        const duration = ((Date.now() - hotmailStartTime) / 1000).toFixed(1);
-
-        const sessionInfo: SessionInfo = {
-          startTime: new Date(hotmailStartTime).toISOString(),
-          endTime: new Date().toISOString(),
-          duration: `${duration}s`,
-          threadsUsed: hotmailThreads,
-          accountsProcessed: liveResults.length,
-          successRate: `${((valid / Math.max(liveResults.length, 1)) * 100).toFixed(1)}%`
+    // Build live results from updates for real-time UI
+    const liveResults: HotmailCheckResult[] = hotmailUpdates
+      .filter(u => u.email !== 'COMPLETE' && u.status !== 'checking')
+      .map(u => {
+        // Parse the message to extract service info
+        const msg = u.message || '';
+        const result: HotmailCheckResult = {
+          email: u.email,
+          password: u.password || '',
+          status: u.status,
         };
-        setHotmailSessionInfo(sessionInfo);
 
-        toast.success(`Complete! ${valid} valid, ${invalid} invalid, ${twoFa} 2FA`);
-
-        // Auto-save hits to Firebase (only once per session)
-        if (hotmailSessionId && !savedSessions.has(hotmailSessionId)) {
-          setSavedSessions(prev => new Set(prev).add(hotmailSessionId));
-          
-          const hits = liveResults.filter(r => r.status === 'valid');
-          const stats = { valid, invalid, twoFa, locked, total: liveResults.length };
-          
-          saveHistory('hotmail_validator', liveResults.length, stats, hits).then(() => {
-            console.log(`Auto-saved ${hits.length} Hotmail hits to Firebase`);
-          }).catch(e => {
-            console.error('Failed to auto-save Hotmail hits:', e);
-          });
+        // Parse subscription info from message
+        if (msg.includes('GAME PASS') || msg.includes('M365')) {
+          result.msStatus = 'PREMIUM';
         }
-        
-        // Remove from active services after a delay
-        setTimeout(() => {
-          setActiveServices(prev => prev.filter(s => s !== 'hotmail_validator'));
-        }, 5000);
-      }
-    } catch (e) {
-      console.error('Error processing hotmail updates:', e);
+        if (msg.includes('PSN:')) {
+          result.psn = { status: 'HAS_ORDERS', orders: parseInt(msg.match(/PSN:(\d+)/)?.[1] || '0'), purchases: [] };
+        }
+        if (msg.includes('MC:')) {
+          result.minecraft = { status: 'OWNED', username: msg.match(/MC:([^\s|]+)/)?.[1] || '' };
+        }
+
+        return result;
+      });
+
+    setHotmailResults(liveResults);
+
+    // Check for completion message
+    if (lastUpdate?.email === 'COMPLETE' || lastUpdate?.message?.includes('Done!')) {
+      setIsHotmailChecking(false);
+      setIsHotmailPaused(false);
+      setHotmailStatus('Complete!');
+
+      // Calculate stats from updates
+      const valid = hotmailUpdates.filter(u => u.status === 'valid' || u.status === 'success').length;
+      const invalid = hotmailUpdates.filter(u => u.status === 'invalid' || u.status === 'failed').length;
+      const twoFa = hotmailUpdates.filter(u => u.status === '2fa').length;
+
+      const duration = ((Date.now() - hotmailStartTime) / 1000).toFixed(1);
+
+      setHotmailSessionInfo({
+        startTime: new Date(hotmailStartTime).toISOString(),
+        endTime: new Date().toISOString(),
+        duration: `${duration}s`,
+        threadsUsed: hotmailThreads,
+        accountsProcessed: liveResults.length,
+        successRate: `${((valid / Math.max(liveResults.length, 1)) * 100).toFixed(1)}%`
+      });
+
+      toast.success(`Complete! ${valid} valid, ${invalid} invalid, ${twoFa} 2FA`);
     }
-  }, [hotmailUpdates, hotmailStartTime, hotmailSessionId, savedSessions, hotmailThreads]);
+  }, [hotmailUpdates, isHotmailChecking, hotmailStartTime]);
 
   // Watch realtime updates (Xbox) so progress + live feed keep working in background mode
   useEffect(() => {
     if (!xboxSessionId || xboxUpdates.length === 0) return;
 
-    try {
-      const lastUpdate = xboxUpdates[xboxUpdates.length - 1];
+    const lastUpdate = xboxUpdates[xboxUpdates.length - 1];
 
-      // Update progress count based on completed items
-      const completed = xboxUpdates.filter(u => u.status !== 'checking' && u.email !== 'COMPLETE').length;
-      setXboxProgress(completed);
+    // Update progress count based on completed items
+    const completed = xboxUpdates.filter(u => u.status !== 'checking' && u.email !== 'COMPLETE').length;
+    setXboxProgress(completed);
 
-      // Keep a human status line even after the initial invoke() returns
-      if (xboxAccountsList.length > 0) {
-        setXboxStatus(`Processing: ${completed}/${xboxAccountsList.length}`);
-      }
-
-      // Mark complete and auto-save hits to Firebase
-      if (lastUpdate?.email === 'COMPLETE' || lastUpdate?.message?.includes('Done!')) {
-        setXboxStatus('Complete!');
-        setIsXboxFetching(false);
-        
-        // Build results from updates
-        const results = xboxUpdates
-          .filter(u => u.email !== 'COMPLETE' && u.status !== 'checking')
-          .map(u => ({
-            email: u.email,
-            password: u.password || '',
-            status: u.status,
-            codes: (u.message?.match(/CODES:\s*([^\n]+)/)?.[1]?.split(',').map(c => c.trim()).filter(Boolean)) || [],
-            message: u.message || ''
-          }));
-        
-        setXboxResults(results);
-        
-        // Auto-save hits to Firebase (only once per session)
-        if (!savedSessions.has(xboxSessionId)) {
-          setSavedSessions(prev => new Set(prev).add(xboxSessionId));
-          
-          const hits = results.filter(r => r.status === 'success' || r.status === 'no_codes');
-          const stats = {
-            success: results.filter(r => r.status === 'success').length,
-            noCodes: results.filter(r => r.status === 'no_codes').length,
-            failed: results.filter(r => !['success', 'no_codes'].includes(r.status)).length,
-            totalCodes: results.reduce((sum, r) => sum + (r.codes?.length || 0), 0),
-            total: results.length
-          };
-          
-          saveHistory('xbox_fetcher', results.length, stats, hits).then(() => {
-            console.log(`Auto-saved ${hits.length} Xbox hits to Firebase`);
-            toast.success(`Saved ${hits.length} Xbox hits to history`);
-          }).catch(e => {
-            console.error('Failed to auto-save Xbox hits:', e);
-          });
-        }
-        
-        // Remove from active services after a delay
-        setTimeout(() => {
-          setActiveServices(prev => prev.filter(s => s !== 'xbox_fetcher'));
-        }, 5000);
-      }
-    } catch (e) {
-      console.error('Error processing xbox updates:', e);
+    // Keep a human status line even after the initial invoke() returns
+    if (xboxAccountsList.length > 0) {
+      setXboxStatus(`Processing: ${completed}/${xboxAccountsList.length}`);
     }
-  }, [xboxUpdates, xboxSessionId, xboxAccountsList.length, savedSessions]);
+
+    // Mark complete (do NOT hide the feed; user can reset manually)
+    if (lastUpdate?.email === 'COMPLETE' || lastUpdate?.message?.includes('Done!')) {
+      setXboxStatus('Complete!');
+    }
+  }, [xboxUpdates, xboxSessionId, xboxAccountsList.length]);
 
   // Keyboard shortcuts (P=pause, S=save, Q=quit)
   const handleShortcutPause = useCallback(() => {
@@ -1327,11 +1157,6 @@ export default function Index() {
     setHotmailSessionInfo(null);
     setIsHotmailPaused(false);
     clearHotmailUpdates();
-    setHotmailSessionId(null);
-    setActiveServices(prev => prev.filter(s => s !== 'hotmail_validator'));
-    if (primaryMiniPlayerService === 'hotmail_validator') {
-      setPrimaryMiniPlayerService(activeServices.find(s => s !== 'hotmail_validator') || null);
-    }
   };
 
   // Redeem code handler
@@ -1342,12 +1167,12 @@ export default function Index() {
     }
     
     setIsRedeeming(true);
-    const { error, services, codeName } = await redeemCode(redeemCodeInput);
+    const { error, services } = await redeemCode(redeemCodeInput);
     
     if (error) {
       toast.error(error);
     } else {
-      toast.success(`Code "${codeName}" redeemed! Access granted to: ${services?.join(', ')}`);
+      toast.success(`Code redeemed! Access granted to: ${services?.join(', ')}`);
       setRedeemCodeInput('');
     }
     setIsRedeeming(false);
@@ -1811,33 +1636,16 @@ export default function Index() {
                       total={xboxAccountsList.length}
                       status={xboxStatus}
                     />
-                {/* Always show live feed if there are updates (persists until reset) */}
-                    {xboxUpdates.length > 0 && (
+                    {(isXboxFetching || xboxUpdates.length > 0) && (
                       <LiveProgressFeed 
                         updates={xboxUpdates}
                         isConnected={xboxConnected}
-                        total={xboxAccountsList.length || xboxUpdates[0]?.total || 1}
+                        total={xboxAccountsList.length}
                         clientIp={clientIp}
                         timezone={timezone}
                         showShortcuts={isXboxFetching}
-                        onClear={handleXboxReset}
                       />
                     )}
-                  </div>
-                )}
-                
-                {/* Show live feed even after progress is done if there are updates */}
-                {!isXboxFetching && xboxProgress === 0 && xboxUpdates.length > 0 && (
-                  <div className="max-w-2xl mx-auto">
-                    <LiveProgressFeed 
-                      updates={xboxUpdates}
-                      isConnected={xboxConnected}
-                      total={xboxUpdates[0]?.total || xboxUpdates.length}
-                      clientIp={clientIp}
-                      timezone={timezone}
-                      showShortcuts={false}
-                      onClear={handleXboxReset}
-                    />
                   </div>
                 )}
 
@@ -1870,26 +1678,11 @@ export default function Index() {
                       />
                     </div>
 
-                    <div className="grid lg:grid-cols-2 gap-4">
-                      <ResultCard
-                        title="Accounts With Codes"
-                        icon={<Gift className="w-5 h-5" />}
-                        items={xboxAccountsWithCodes}
-                        colorClass="text-success"
-                      />
-                      <ResultCard
-                        title="Valid Accounts (No Codes)"
-                        icon={<CheckCircle className="w-5 h-5" />}
-                        items={xboxValidAccounts}
-                        colorClass="text-blue-500"
-                      />
-                    </div>
-                    
                     <ResultCard
-                      title="All Codes"
+                      title="All Xbox Codes"
                       icon={<Gamepad2 className="w-5 h-5" />}
                       items={allXboxCodes}
-                      colorClass="text-primary"
+                      colorClass="text-success"
                     />
                   </>
                 )}
@@ -2046,33 +1839,16 @@ socks5://host:port
                       total={hotmailAccountsList.length}
                       status={hotmailStatus}
                     />
-                    {/* Always show live feed if there are updates (persists until reset) */}
-                    {hotmailUpdates.length > 0 && (
+                    {(isHotmailChecking || hotmailUpdates.length > 0) && (
                       <LiveProgressFeed 
                         updates={hotmailUpdates}
                         isConnected={hotmailConnected}
-                        total={hotmailAccountsList.length || hotmailUpdates[0]?.total || 1}
+                        total={hotmailAccountsList.length}
                         clientIp={clientIp}
                         timezone={timezone}
                         showShortcuts={isHotmailChecking}
-                        onClear={handleHotmailReset}
                       />
                     )}
-                  </div>
-                )}
-                
-                {/* Show live feed even after progress is done if there are updates */}
-                {!isHotmailChecking && hotmailProgress === 0 && hotmailUpdates.length > 0 && (
-                  <div className="max-w-2xl mx-auto">
-                    <LiveProgressFeed 
-                      updates={hotmailUpdates}
-                      isConnected={hotmailConnected}
-                      total={hotmailUpdates[0]?.total || hotmailUpdates.length}
-                      clientIp={clientIp}
-                      timezone={timezone}
-                      showShortcuts={false}
-                      onClear={handleHotmailReset}
-                    />
                   </div>
                 )}
 
@@ -2464,38 +2240,6 @@ socks5://host:port
           </TabsContent>
         </Tabs>
       </main>
-      
-      {/* Mini Progress Player - Spotify style (supports multiple services) */}
-      {showMiniPlayer && primaryMiniPlayerService && (
-        <MiniProgressPlayer
-          sessionId={
-            primaryMiniPlayerService === 'hotmail_validator' ? hotmailSessionId :
-            primaryMiniPlayerService === 'xbox_fetcher' ? xboxSessionId :
-            null
-          }
-          service={primaryMiniPlayerService}
-          updates={
-            primaryMiniPlayerService === 'hotmail_validator' ? hotmailUpdates :
-            primaryMiniPlayerService === 'xbox_fetcher' ? xboxUpdates :
-            []
-          }
-          isConnected={
-            primaryMiniPlayerService === 'hotmail_validator' ? hotmailConnected :
-            primaryMiniPlayerService === 'xbox_fetcher' ? xboxConnected :
-            false
-          }
-          onClose={() => {
-            // Cycle to next active service or close
-            const idx = activeServices.indexOf(primaryMiniPlayerService);
-            if (activeServices.length > 1) {
-              const nextIdx = (idx + 1) % activeServices.length;
-              setPrimaryMiniPlayerService(activeServices[nextIdx]);
-            } else {
-              setShowMiniPlayer(false);
-            }
-          }}
-        />
-      )}
     </div>
   );
 }

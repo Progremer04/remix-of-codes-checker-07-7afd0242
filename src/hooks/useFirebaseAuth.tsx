@@ -11,7 +11,7 @@ import {
   onAuthStateChanged,
   updateProfile
 } from 'firebase/auth';
-import { ref, set, get, onValue, push } from 'firebase/database';
+import { ref, set, get, onValue } from 'firebase/database';
 import { auth, database } from '@/integrations/firebase/config';
 
 interface UserData {
@@ -35,7 +35,7 @@ interface FirebaseAuthContextType {
   sendMagicLink: (email: string) => Promise<{ error?: string }>;
   resetPassword: (email: string) => Promise<{ error?: string }>;
   completeMagicLinkSignIn: () => Promise<{ error?: string }>;
-  redeemCode: (code: string) => Promise<{ error?: string; services?: string[]; codeName?: string }>;
+  redeemCode: (code: string) => Promise<{ error?: string; services?: string[] }>;
 }
 
 const FirebaseAuthContext = createContext<FirebaseAuthContextType | null>(null);
@@ -296,7 +296,7 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
     }
   };
 
-  const redeemCode = async (code: string): Promise<{ error?: string; services?: string[]; codeName?: string }> => {
+  const redeemCode = async (code: string): Promise<{ error?: string; services?: string[] }> => {
     if (!user) {
       return { error: 'Please sign in first' };
     }
@@ -311,7 +311,6 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
       }
       
       const codeData = snapshot.val();
-      const codeName = codeData.name || code.toUpperCase();
       
       if (!codeData.isActive) {
         return { error: 'This code is no longer active' };
@@ -341,50 +340,32 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
       
       await set(ref(database, `users/${user.uid}/services`), newServices);
       
-      // Save service expiry information and code name if code has expiry
-      const currentExpiry = userSnapshot.exists() ? (userSnapshot.val().serviceExpiry || {}) : {};
-      const currentCodeNames = userSnapshot.exists() ? (userSnapshot.val().serviceCodeNames || {}) : {};
-      
-      for (const service of codeData.services) {
-        // Track which code granted this service
-        currentCodeNames[service] = codeName;
-        
-        // Only update expiry if new expiry is later than current one
-        if (codeData.expiresAt) {
+      // Save service expiry information if code has expiry
+      if (codeData.expiresAt) {
+        const currentExpiry = userSnapshot.exists() ? (userSnapshot.val().serviceExpiry || {}) : {};
+        for (const service of codeData.services) {
+          // Only update if new expiry is later than current one
           const existingExpiry = currentExpiry[service];
           if (!existingExpiry || new Date(codeData.expiresAt) > new Date(existingExpiry)) {
             currentExpiry[service] = codeData.expiresAt;
           }
         }
+        await set(ref(database, `users/${user.uid}/serviceExpiry`), currentExpiry);
       }
       
-      await set(ref(database, `users/${user.uid}/serviceExpiry`), currentExpiry);
-      await set(ref(database, `users/${user.uid}/serviceCodeNames`), currentCodeNames);
-      
-      // Record redemption with code name
+      // Record redemption
       await set(redemptionRef, {
         redeemedAt: new Date().toISOString(),
         services: codeData.services,
-        expiresAt: codeData.expiresAt || null,
-        codeName: codeName
+        expiresAt: codeData.expiresAt || null
       });
       
       // Increment usage count
       await set(ref(database, `redeemCodes/${code.toUpperCase()}/currentUses`), codeData.currentUses + 1);
       
-      // Send notification to user about successful redemption
-      const notificationsRef = ref(database, `notifications/${user.uid}`);
-      await push(notificationsRef, {
-        type: 'service',
-        title: '🎉 Code Redeemed!',
-        message: `Successfully redeemed "${codeName}". You now have access to: ${codeData.services.join(', ')}`,
-        createdAt: Date.now(),
-        read: false
-      });
-      
       setUserServices(newServices);
       
-      return { services: codeData.services, codeName };
+      return { services: codeData.services };
     } catch (error: any) {
       console.error('Redeem code error:', error);
       return { error: error.message || 'Failed to redeem code' };

@@ -20,7 +20,6 @@ interface ServiceExpiry {
   service: string;
   expiresAt?: string;
   grantedAt?: string;
-  codeName?: string;
 }
 
 const SERVICE_LABELS: Record<string, string> = {
@@ -60,16 +59,20 @@ export default function Profile() {
       if (snapshot.exists()) {
         const data = snapshot.val();
         const expiries: ServiceExpiry[] = [];
-        const codeNames = data.serviceCodeNames || {};
         
-        if (data.serviceExpiry || data.services) {
-          const services = data.services || Object.keys(data.serviceExpiry || {});
-          for (const service of services) {
+        if (data.serviceExpiry) {
+          for (const [service, dateStr] of Object.entries(data.serviceExpiry)) {
             expiries.push({
               service,
-              expiresAt: data.serviceExpiry?.[service] as string | undefined,
-              grantedAt: data.createdAt,
-              codeName: codeNames[service] as string | undefined
+              expiresAt: dateStr as string,
+              grantedAt: data.createdAt
+            });
+          }
+        } else if (data.services) {
+          for (const service of data.services) {
+            expiries.push({
+              service,
+              grantedAt: data.createdAt
             });
           }
         }
@@ -229,14 +232,6 @@ export default function Profile() {
                         <CheckCircle className="w-5 h-5 text-success" />
                       )}
                     </div>
-                    
-                    {/* Show which code was used */}
-                    {expiry?.codeName && (
-                      <div className="flex items-center gap-1 text-xs text-primary mb-2">
-                        <Key className="w-3 h-3" />
-                        <span>Code: <span className="font-mono bg-primary/10 px-1 rounded">{expiry.codeName}</span></span>
-                      </div>
-                    )}
                     
                     {hasExpiry ? (
                       <div className="space-y-1 text-sm">

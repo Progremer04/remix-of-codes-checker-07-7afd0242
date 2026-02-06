@@ -1103,7 +1103,7 @@ async function processAccountsBackground(
   
   // Start workers
   const workers: Promise<void>[] = [];
-  const actualThreads = Math.min(threads, accounts.length, 50); // Cap at 50 concurrent like Python
+  const actualThreads = Math.min(threads, accounts.length, 10); // Cap at 10 concurrent
   for (let i = 0; i < actualThreads; i++) {
     workers.push(worker(i + 1));
   }
@@ -1115,9 +1115,9 @@ async function processAccountsBackground(
   console.log(`${getCanaryTimestamp()} COMPLETE | Duration: ${duration}`);
   console.log(`${getCanaryTimestamp()} Valid: ${stats.valid} | Invalid: ${stats.invalid} | 2FA: ${stats.twoFa}`);
   
-  // Broadcast completion (use total+1 so it doesn't overwrite last account)
+  // Broadcast completion
   await broadcastProgress(sessionId, {
-    index: total + 1,
+    index: total,
     total,
     email: 'COMPLETE',
     password: '',
