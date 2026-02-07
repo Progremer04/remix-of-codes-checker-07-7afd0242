@@ -1,14 +1,4 @@
 @tailwind base;
-
-/* Custom animations */
-@keyframes scan {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(500%); }
-}
-
-.animate-scan {
-  animation: scan 2s ease-in-out infinite;
-}
 @tailwind components;
 @tailwind utilities;
 

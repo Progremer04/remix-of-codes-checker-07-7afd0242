@@ -340,24 +340,10 @@ export function FirebaseAuthProvider({ children }: { children: React.ReactNode }
       
       await set(ref(database, `users/${user.uid}/services`), newServices);
       
-      // Save service expiry information if code has expiry
-      if (codeData.expiresAt) {
-        const currentExpiry = userSnapshot.exists() ? (userSnapshot.val().serviceExpiry || {}) : {};
-        for (const service of codeData.services) {
-          // Only update if new expiry is later than current one
-          const existingExpiry = currentExpiry[service];
-          if (!existingExpiry || new Date(codeData.expiresAt) > new Date(existingExpiry)) {
-            currentExpiry[service] = codeData.expiresAt;
-          }
-        }
-        await set(ref(database, `users/${user.uid}/serviceExpiry`), currentExpiry);
-      }
-      
       // Record redemption
       await set(redemptionRef, {
         redeemedAt: new Date().toISOString(),
-        services: codeData.services,
-        expiresAt: codeData.expiresAt || null
+        services: codeData.services
       });
       
       // Increment usage count

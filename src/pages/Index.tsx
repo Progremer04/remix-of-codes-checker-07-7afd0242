@@ -1,10 +1,9 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Key, Code, Play, Loader2, CheckCircle, XCircle, Clock, 
   AlertTriangle, RotateCcw, Users, Settings2, Gamepad2, 
-  Cookie, Shield, Gift, LogOut, Mail, ShoppingCart, LayoutDashboard, Upload, Download, Zap,
-  Pause, Square, FileDown, BarChart3
+  Cookie, Shield, Gift, LogOut, Mail, ShoppingCart, LayoutDashboard, Upload, Download, Zap
 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { CodeInput } from '@/components/CodeInput';
@@ -27,7 +26,6 @@ import { useFirebaseAuth } from '@/hooks/useFirebaseAuth';
 import { ref, push, set } from 'firebase/database';
 import { database } from '@/integrations/firebase/config';
 import { useRealtimeProgress, generateSessionId } from '@/hooks/useRealtimeProgress';
-import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import JSZip from 'jszip';
 
 interface ClaimResult {
@@ -188,7 +186,6 @@ export default function Index() {
   // Hotmail Checker State
   const [hotmailAccounts, setHotmailAccounts] = useState('');
   const [isHotmailChecking, setIsHotmailChecking] = useState(false);
-  const [isHotmailPaused, setIsHotmailPaused] = useState(false);
   const [hotmailProgress, setHotmailProgress] = useState(0);
   const [hotmailStatus, setHotmailStatus] = useState('');
   const [hotmailResults, setHotmailResults] = useState<HotmailCheckResult[]>([]);
@@ -196,7 +193,6 @@ export default function Index() {
   const [hotmailCheckMode, setHotmailCheckMode] = useState('all');
   const [hotmailProxies, setHotmailProxies] = useState('');
   const [hotmailSessionInfo, setHotmailSessionInfo] = useState<SessionInfo | null>(null);
-  const [hotmailStartTime, setHotmailStartTime] = useState<number>(0);
   
   // Realtime progress session IDs
   const [hotmailSessionId, setHotmailSessionId] = useState<string | null>(null);
@@ -207,21 +203,6 @@ export default function Index() {
   const { updates: hotmailUpdates, isConnected: hotmailConnected, clearUpdates: clearHotmailUpdates } = useRealtimeProgress(hotmailSessionId);
   const { updates: xboxUpdates, isConnected: xboxConnected, clearUpdates: clearXboxUpdates } = useRealtimeProgress(xboxSessionId);
   const { updates: manusUpdates, isConnected: manusConnected, clearUpdates: clearManusUpdates } = useRealtimeProgress(manusSessionId);
-  
-  // Client info for session display
-  const [clientIp, setClientIp] = useState<string>('');
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  
-  // Fetch client IP on mount
-  useEffect(() => {
-    fetch('https://api.ipify.org?format=json')
-      .then(res => res.json())
-      .then(data => setClientIp(data.ip || ''))
-      .catch(() => setClientIp('Unknown'));
-  }, []);
-  
-  // Active tab for keyboard shortcuts context
-  const [activeTab, setActiveTab] = useState('codes');
   
   const username = userData?.displayName || user?.email || 'User';
 
@@ -293,15 +274,15 @@ export default function Index() {
   );
 
   const xboxStats = useMemo(() => ({
-    success: (xboxResults || []).filter(r => r.status === 'success').length,
-    noCodes: (xboxResults || []).filter(r => r.status === 'no_codes').length,
-    failed: (xboxResults || []).filter(r => !['success', 'no_codes'].includes(r.status)).length,
-    totalCodes: (xboxResults || []).reduce((sum, r) => sum + (r.codes?.length || 0), 0),
-    total: (xboxResults || []).length,
+    success: xboxResults.filter(r => r.status === 'success').length,
+    noCodes: xboxResults.filter(r => r.status === 'no_codes').length,
+    failed: xboxResults.filter(r => !['success', 'no_codes'].includes(r.status)).length,
+    totalCodes: xboxResults.reduce((sum, r) => sum + r.codes.length, 0),
+    total: xboxResults.length,
   }), [xboxResults]);
 
   const allXboxCodes = useMemo(() => 
-    (xboxResults || []).flatMap(r => r.codes || []),
+    xboxResults.flatMap(r => r.codes),
     [xboxResults]
   );
 
@@ -312,9 +293,9 @@ export default function Index() {
   );
 
   const manusStats = useMemo(() => ({
-    success: (manusResults || []).filter(r => r.status === 'success').length,
-    failed: (manusResults || []).filter(r => r.status === 'failed').length,
-    total: (manusResults || []).length,
+    success: manusResults.filter(r => r.status === 'success').length,
+    failed: manusResults.filter(r => r.status === 'failed').length,
+    total: manusResults.length,
   }), [manusResults]);
 
   // Hotmail Checker computed values
@@ -324,17 +305,17 @@ export default function Index() {
   );
 
   const hotmailStats = useMemo(() => ({
-    valid: (hotmailResults || []).filter(r => r.status === 'valid').length,
-    invalid: (hotmailResults || []).filter(r => r.status === 'invalid').length,
-    twoFa: (hotmailResults || []).filter(r => r.status === '2fa').length,
-    locked: (hotmailResults || []).filter(r => r.status === 'locked').length,
-    msPremium: (hotmailResults || []).filter(r => r.msStatus === 'PREMIUM').length,
-    psnHits: (hotmailResults || []).filter(r => r.psn?.status === 'HAS_ORDERS').length,
-    steamHits: (hotmailResults || []).filter(r => r.steam?.status === 'HAS_PURCHASES').length,
-    supercellHits: (hotmailResults || []).filter(r => r.supercell?.status === 'LINKED').length,
-    tiktokHits: (hotmailResults || []).filter(r => r.tiktok?.status === 'LINKED').length,
-    minecraftHits: (hotmailResults || []).filter(r => r.minecraft?.status === 'OWNED').length,
-    total: (hotmailResults || []).length,
+    valid: hotmailResults.filter(r => r.status === 'valid').length,
+    invalid: hotmailResults.filter(r => r.status === 'invalid').length,
+    twoFa: hotmailResults.filter(r => r.status === '2fa').length,
+    locked: hotmailResults.filter(r => r.status === 'locked').length,
+    msPremium: hotmailResults.filter(r => r.msStatus === 'PREMIUM').length,
+    psnHits: hotmailResults.filter(r => r.psn?.status === 'HAS_ORDERS').length,
+    steamHits: hotmailResults.filter(r => r.steam?.status === 'HAS_PURCHASES').length,
+    supercellHits: hotmailResults.filter(r => r.supercell?.status === 'LINKED').length,
+    tiktokHits: hotmailResults.filter(r => r.tiktok?.status === 'LINKED').length,
+    minecraftHits: hotmailResults.filter(r => r.minecraft?.status === 'OWNED').length,
+    total: hotmailResults.length,
   }), [hotmailResults]);
 
   // Check service access
@@ -368,18 +349,13 @@ export default function Index() {
     try {
       const historyRef = ref(database, `users/${user.uid}/checkHistory`);
       const newHistoryRef = push(historyRef);
-      
-      // Sanitize stats - remove undefined values (Firebase doesn't allow undefined)
-      const sanitizedStats = stats ? JSON.parse(JSON.stringify(stats)) : {};
-      const sanitizedResults = results ? JSON.parse(JSON.stringify(results)) : [];
-      
       await set(newHistoryRef, {
         userId: user.uid,
-        username: userData?.displayName || user.email || 'Unknown',
+        username: userData?.displayName || user.email,
         service,
-        inputCount: inputCount || 0,
-        stats: sanitizedStats,
-        results: sanitizedResults,
+        inputCount,
+        stats,
+        results: results || [],
         createdAt: new Date().toISOString(),
       });
     } catch (e) {
@@ -549,46 +525,6 @@ export default function Index() {
     setCheckStatus('');
   };
 
-  // Export Codes Checker results
-  const exportCodesResults = (type: 'valid' | 'used' | 'expired' | 'all') => {
-    let items: string[] = [];
-    let filename = 'codes';
-
-    switch (type) {
-      case 'valid':
-        items = validResults;
-        filename = 'valid_codes';
-        break;
-      case 'used':
-        items = usedResults;
-        filename = 'used_codes';
-        break;
-      case 'expired':
-        items = expiredResults;
-        filename = 'expired_codes';
-        break;
-      case 'all':
-        items = validResults;
-        filename = 'all_valid_codes';
-        break;
-    }
-
-    if (items.length === 0) {
-      toast.error('No codes to export');
-      return;
-    }
-
-    const content = items.join('\n');
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${filename}_${new Date().toISOString().slice(0, 10)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success(`Downloaded ${items.length} ${type} codes`);
-  };
-
   // WLID Claimer functions
   const claimWlids = async () => {
     if (accountsList.length === 0) {
@@ -643,24 +579,6 @@ export default function Index() {
     setClaimStatus('');
   };
 
-  // Export WLID tokens
-  const exportWlidTokens = () => {
-    if (successfulTokens.length === 0) {
-      toast.error('No tokens to export');
-      return;
-    }
-
-    const content = successfulTokens.join('\n');
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `wlid_tokens_${new Date().toISOString().slice(0, 10)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success(`Downloaded ${successfulTokens.length} WLID tokens`);
-  };
-
   // Xbox Fetcher functions
   const fetchXboxCodes = async () => {
     if (!hasServiceAccess('xbox_fetcher')) {
@@ -703,24 +621,12 @@ export default function Index() {
         return;
       }
 
-      // Handle background processing mode - results come via realtime updates
-      if (data.status === 'processing') {
-        console.log('Xbox background job started:', data);
-        setXboxStatus(`Processing ${data.total} accounts...`);
-        toast.success(`Started processing ${data.total} accounts. Watch the live progress feed.`);
-        // Don't set results here - they'll come via realtime updates
-        // Save initial history entry
-        await saveHistory('xbox_fetcher', xboxAccountsList.length, { status: 'processing', total: data.total }, []);
-        return;
-      }
-
-      // Handle direct results (if returned synchronously)
-      setXboxResults(data.results || []);
+      setXboxResults(data.results);
       setXboxProgress(xboxAccountsList.length);
       setXboxStatus('Complete!');
       toast.success(`Found ${data.stats?.totalCodes || 0} codes from ${data.stats?.success || 0} accounts`);
       
-      await saveHistory('xbox_fetcher', xboxAccountsList.length, data.stats || {}, data.results || []);
+      await saveHistory('xbox_fetcher', xboxAccountsList.length, data.stats, data.results);
 
     } catch (err) {
       console.error('Error:', err);
@@ -734,24 +640,6 @@ export default function Index() {
     setXboxResults([]);
     setXboxProgress(0);
     setXboxStatus('');
-  };
-
-  // Export Xbox codes
-  const exportXboxCodes = () => {
-    if (allXboxCodes.length === 0) {
-      toast.error('No Xbox codes to export');
-      return;
-    }
-
-    const content = allXboxCodes.join('\n');
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `xbox_codes_${new Date().toISOString().slice(0, 10)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success(`Downloaded ${allXboxCodes.length} Xbox codes`);
   };
 
   // Manus Checker functions
@@ -853,34 +741,18 @@ export default function Index() {
     
     for (const hit of hits) {
       // Create filename: [email][plan][credit].txt
-      const email = (hit.email || 'unknown').replace(/[<>:"/\\|?*]/g, '_');
+      const email = hit.email || 'unknown';
       const plan = (hit.plan || hit.membership || 'free').replace(/[^a-zA-Z0-9]/g, '_');
       const credits = hit.totalCredits || '0';
       const filename = `[${email}][${plan}][${credits}].txt`;
       
-      // Find original cookie content by filename or index
-      // Results come back in order, so we can match by index from filename (cookie_1.txt, cookie_2.txt, etc.)
-      let originalContent: string | null = null;
+      // Find original cookie content
+      const originalFile = manusUploadedFiles.find(f => 
+        f.name === hit.filename || f.content.includes(hit.email || '')
+      );
       
-      // Try to match by filename pattern (cookie_N.txt)
-      const indexMatch = hit.filename?.match(/cookie_(\d+)\.txt/);
-      if (indexMatch && manusUploadedFiles.length > 0) {
-        const idx = parseInt(indexMatch[1], 10) - 1;
-        if (idx >= 0 && idx < manusUploadedFiles.length) {
-          originalContent = manusUploadedFiles[idx].content;
-        }
-      }
-      
-      // Fallback: try to find by original filename
-      if (!originalContent) {
-        const matchByName = manusUploadedFiles.find(f => f.name === hit.filename);
-        if (matchByName) {
-          originalContent = matchByName.content;
-        }
-      }
-      
-      // Add to zip with original cookie content
-      const content = originalContent || `# Email: ${email}\n# Plan: ${plan}\n# Credits: ${credits}\n# Note: Original cookie content not found`;
+      // Add to zip with original cookie content or placeholder
+      const content = originalFile?.content || `Email: ${email}\nPlan: ${plan}\nCredits: ${credits}`;
       zip.file(filename, content);
     }
 
@@ -911,12 +783,12 @@ export default function Index() {
     setHotmailSessionId(sessionId);
     clearHotmailUpdates();
     setIsHotmailChecking(true);
-    setIsHotmailPaused(false);
     setHotmailResults([]);
     setHotmailProgress(0);
     setHotmailSessionInfo(null);
     setHotmailStatus(`Starting check of ${hotmailAccountsList.length} accounts...`);
-    setHotmailStartTime(Date.now());
+
+    const startTime = Date.now();
 
     try {
       const proxyList = hotmailProxies.split('\n').map(p => p.trim()).filter(p => p.length > 0);
@@ -948,6 +820,9 @@ export default function Index() {
       if (data?.status === 'processing') {
         toast.success(`Processing ${data.total} accounts in background. Watch the live feed!`);
         setHotmailStatus(`Processing ${data.total} accounts...`);
+        
+        // The realtime updates will come through the useRealtimeProgress hook
+        // We'll collect results from the updates
       } else if (data?.error) {
         toast.error(data.error);
         setIsHotmailChecking(false);
@@ -961,198 +836,57 @@ export default function Index() {
     }
   };
 
-  // Cancel Hotmail checking
-  const cancelHotmailCheck = () => {
-    setIsHotmailChecking(false);
-    setIsHotmailPaused(false);
-    setHotmailStatus('Cancelled by user');
-    toast.info('Checking cancelled');
-  };
-
-  // Pause/Resume Hotmail checking
-  const toggleHotmailPause = () => {
-    setIsHotmailPaused(prev => !prev);
-    toast.info(isHotmailPaused ? 'Resuming...' : 'Paused');
-  };
-
-  // Export Hotmail hits
-  const exportHotmailHits = (type: 'all' | 'valid' | '2fa' | 'premium' | 'psn' | 'minecraft') => {
-    let items: string[] = [];
-    let filename = 'hotmail_hits';
-
-    switch (type) {
-      case 'all':
-        items = hotmailResults.filter(r => r.status === 'valid').map(r => `${r.email}:${r.password}`);
-        filename = 'all_valid';
-        break;
-      case 'valid':
-        items = hotmailResults.filter(r => r.status === 'valid').map(r => `${r.email}:${r.password}`);
-        filename = 'valid';
-        break;
-      case '2fa':
-        items = hotmailResults.filter(r => r.status === '2fa').map(r => `${r.email}:${r.password}`);
-        filename = '2fa';
-        break;
-      case 'premium':
-        items = hotmailResults.filter(r => r.msStatus === 'PREMIUM').map(r => {
-          const subs = r.subscriptions?.filter(s => !s.isExpired).map(s => s.name).join(', ') || '';
-          return `${r.email}:${r.password} | ${subs}`;
-        });
-        filename = 'ms_premium';
-        break;
-      case 'psn':
-        items = hotmailResults.filter(r => r.psn?.status === 'HAS_ORDERS').map(r => 
-          `${r.email}:${r.password} | Orders: ${r.psn?.orders}`
-        );
-        filename = 'psn_hits';
-        break;
-      case 'minecraft':
-        items = hotmailResults.filter(r => r.minecraft?.status === 'OWNED').map(r => 
-          `${r.email}:${r.password} | ${r.minecraft?.username}`
-        );
-        filename = 'minecraft_hits';
-        break;
-    }
-
-    if (items.length === 0) {
-      toast.error('No hits to export');
-      return;
-    }
-
-    const content = items.join('\n');
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${filename}_${new Date().toISOString().slice(0, 10)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success(`Downloaded ${items.length} ${type} hits`);
-  };
-
-  // Watch for completion in realtime updates (Hotmail)
+  // Watch for completion in realtime updates
   useEffect(() => {
     if (!isHotmailChecking || hotmailUpdates.length === 0) return;
-
+    
     const lastUpdate = hotmailUpdates[hotmailUpdates.length - 1];
-
+    
     // Update progress
     const completed = hotmailUpdates.filter(u => u.status !== 'checking').length;
     setHotmailProgress(completed);
-
-    // Build live results from updates for real-time UI
-    const liveResults: HotmailCheckResult[] = hotmailUpdates
-      .filter(u => u.email !== 'COMPLETE' && u.status !== 'checking')
-      .map(u => {
-        // Parse the message to extract service info
-        const msg = u.message || '';
-        const result: HotmailCheckResult = {
-          email: u.email,
-          password: u.password || '',
-          status: u.status,
-        };
-
-        // Parse subscription info from message
-        if (msg.includes('GAME PASS') || msg.includes('M365')) {
-          result.msStatus = 'PREMIUM';
-        }
-        if (msg.includes('PSN:')) {
-          result.psn = { status: 'HAS_ORDERS', orders: parseInt(msg.match(/PSN:(\d+)/)?.[1] || '0'), purchases: [] };
-        }
-        if (msg.includes('MC:')) {
-          result.minecraft = { status: 'OWNED', username: msg.match(/MC:([^\s|]+)/)?.[1] || '' };
-        }
-
-        return result;
-      });
-
-    setHotmailResults(liveResults);
-
+    
     // Check for completion message
     if (lastUpdate?.email === 'COMPLETE' || lastUpdate?.message?.includes('Done!')) {
       setIsHotmailChecking(false);
-      setIsHotmailPaused(false);
       setHotmailStatus('Complete!');
-
+      
+      // Build results from updates
+      const results: HotmailCheckResult[] = hotmailUpdates
+        .filter(u => u.email !== 'COMPLETE' && u.status !== 'checking')
+        .map(u => ({
+          email: u.email,
+          password: '',
+          status: u.status,
+        }));
+      
+      setHotmailResults(results);
+      
       // Calculate stats from updates
       const valid = hotmailUpdates.filter(u => u.status === 'valid' || u.status === 'success').length;
       const invalid = hotmailUpdates.filter(u => u.status === 'invalid' || u.status === 'failed').length;
       const twoFa = hotmailUpdates.filter(u => u.status === '2fa').length;
-
-      const duration = ((Date.now() - hotmailStartTime) / 1000).toFixed(1);
-
+      
+      const duration = ((Date.now() - (hotmailUpdates[0]?.timestamp || Date.now())) / 1000).toFixed(1);
+      
       setHotmailSessionInfo({
-        startTime: new Date(hotmailStartTime).toISOString(),
+        startTime: new Date(hotmailUpdates[0]?.timestamp || Date.now()).toISOString(),
         endTime: new Date().toISOString(),
         duration: `${duration}s`,
         threadsUsed: hotmailThreads,
-        accountsProcessed: liveResults.length,
-        successRate: `${((valid / Math.max(liveResults.length, 1)) * 100).toFixed(1)}%`
+        accountsProcessed: hotmailUpdates.filter(u => u.email !== 'COMPLETE').length,
+        successRate: `${((valid / Math.max(results.length, 1)) * 100).toFixed(1)}%`
       });
-
+      
       toast.success(`Complete! ${valid} valid, ${invalid} invalid, ${twoFa} 2FA`);
     }
-  }, [hotmailUpdates, isHotmailChecking, hotmailStartTime]);
-
-  // Watch realtime updates (Xbox) so progress + live feed keep working in background mode
-  useEffect(() => {
-    if (!xboxSessionId || xboxUpdates.length === 0) return;
-
-    const lastUpdate = xboxUpdates[xboxUpdates.length - 1];
-
-    // Update progress count based on completed items
-    const completed = xboxUpdates.filter(u => u.status !== 'checking' && u.email !== 'COMPLETE').length;
-    setXboxProgress(completed);
-
-    // Keep a human status line even after the initial invoke() returns
-    if (xboxAccountsList.length > 0) {
-      setXboxStatus(`Processing: ${completed}/${xboxAccountsList.length}`);
-    }
-
-    // Mark complete (do NOT hide the feed; user can reset manually)
-    if (lastUpdate?.email === 'COMPLETE' || lastUpdate?.message?.includes('Done!')) {
-      setXboxStatus('Complete!');
-    }
-  }, [xboxUpdates, xboxSessionId, xboxAccountsList.length]);
-
-  // Keyboard shortcuts (P=pause, S=save, Q=quit)
-  const handleShortcutPause = useCallback(() => {
-    if (activeTab === 'hotmail' && isHotmailChecking) {
-      toggleHotmailPause();
-    }
-  }, [activeTab, isHotmailChecking]);
-
-  const handleShortcutSave = useCallback(() => {
-    if (activeTab === 'hotmail' && hotmailResults.length > 0) {
-      exportHotmailHits('all');
-    } else if (activeTab === 'xbox' && allXboxCodes.length > 0) {
-      exportXboxCodes();
-    }
-  }, [activeTab, hotmailResults.length, allXboxCodes.length]);
-
-  const handleShortcutQuit = useCallback(() => {
-    if (activeTab === 'hotmail' && isHotmailChecking) {
-      cancelHotmailCheck();
-    } else if (activeTab === 'xbox' && isXboxFetching) {
-      setIsXboxFetching(false);
-      setXboxStatus('Cancelled by user');
-      toast.info('Xbox fetch cancelled');
-    }
-  }, [activeTab, isHotmailChecking, isXboxFetching]);
-
-  useKeyboardShortcuts({
-    onPause: handleShortcutPause,
-    onSave: handleShortcutSave,
-    onQuit: handleShortcutQuit,
-    enabled: isHotmailChecking || isXboxFetching
-  });
+  }, [hotmailUpdates, isHotmailChecking]);
 
   const handleHotmailReset = () => {
     setHotmailResults([]);
     setHotmailProgress(0);
     setHotmailStatus('');
     setHotmailSessionInfo(null);
-    setIsHotmailPaused(false);
     clearHotmailUpdates();
   };
 
@@ -1213,16 +947,6 @@ export default function Index() {
           <Button 
             variant="outline" 
             size="sm" 
-            onClick={() => navigate('/hits')}
-            className="shadow-3d"
-          >
-            <BarChart3 className="w-4 h-4 mr-2" />
-            Hits Dashboard
-          </Button>
-          
-          <Button 
-            variant="outline" 
-            size="sm" 
             onClick={handleLogout}
             className="shadow-3d"
           >
@@ -1252,7 +976,7 @@ export default function Index() {
           </div>
         </div>
 
-        <Tabs defaultValue="dashboard" className="w-full" onValueChange={setActiveTab}>
+        <Tabs defaultValue="dashboard" className="w-full">
           <TabsList className="grid w-full max-w-4xl mx-auto grid-cols-6 glass-card mb-8">
             <TabsTrigger value="dashboard" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <LayoutDashboard className="w-4 h-4 mr-2" />
@@ -1341,24 +1065,14 @@ export default function Index() {
               </Button>
               
               {checkResults.length > 0 && !isChecking && (
-                <>
-                  <Button 
-                    variant="outline" 
-                    onClick={handleCheckReset}
-                    className="shadow-3d hover:shadow-glow transition-all"
-                  >
-                    <RotateCcw className="w-4 h-4 mr-2" />
-                    Reset
-                  </Button>
-                  <Button 
-                    variant="secondary" 
-                    onClick={() => exportCodesResults('valid')}
-                    className="shadow-3d hover:shadow-glow transition-all"
-                  >
-                    <FileDown className="w-4 h-4 mr-2" />
-                    Export Valid
-                  </Button>
-                </>
+                <Button 
+                  variant="outline" 
+                  onClick={handleCheckReset}
+                  className="shadow-3d hover:shadow-glow transition-all"
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Reset
+                </Button>
               )}
             </div>
 
@@ -1480,24 +1194,14 @@ export default function Index() {
               </Button>
               
               {claimResults.length > 0 && !isClaiming && (
-                <>
-                  <Button 
-                    variant="outline" 
-                    onClick={handleClaimReset}
-                    className="shadow-3d hover:shadow-glow transition-all"
-                  >
-                    <RotateCcw className="w-4 h-4 mr-2" />
-                    Reset
-                  </Button>
-                  <Button 
-                    variant="secondary" 
-                    onClick={exportWlidTokens}
-                    className="shadow-3d hover:shadow-glow transition-all"
-                  >
-                    <FileDown className="w-4 h-4 mr-2" />
-                    Export Tokens
-                  </Button>
-                </>
+                <Button 
+                  variant="outline" 
+                  onClick={handleClaimReset}
+                  className="shadow-3d hover:shadow-glow transition-all"
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Reset
+                </Button>
               )}
             </div>
 
@@ -1605,24 +1309,14 @@ export default function Index() {
                   </Button>
                   
                   {xboxResults.length > 0 && !isXboxFetching && (
-                    <>
-                      <Button 
-                        variant="outline" 
-                        onClick={handleXboxReset}
-                        className="shadow-3d hover:shadow-glow transition-all"
-                      >
-                        <RotateCcw className="w-4 h-4 mr-2" />
-                        Reset
-                      </Button>
-                      <Button 
-                        variant="secondary" 
-                        onClick={exportXboxCodes}
-                        className="shadow-3d hover:shadow-glow transition-all"
-                      >
-                        <FileDown className="w-4 h-4 mr-2" />
-                        Export Codes
-                      </Button>
-                    </>
+                    <Button 
+                      variant="outline" 
+                      onClick={handleXboxReset}
+                      className="shadow-3d hover:shadow-glow transition-all"
+                    >
+                      <RotateCcw className="w-4 h-4 mr-2" />
+                      Reset
+                    </Button>
                   )}
                 </div>
 
@@ -1633,14 +1327,11 @@ export default function Index() {
                       total={xboxAccountsList.length}
                       status={xboxStatus}
                     />
-                    {(isXboxFetching || xboxUpdates.length > 0) && (
+                    {isXboxFetching && (
                       <LiveProgressFeed 
                         updates={xboxUpdates}
                         isConnected={xboxConnected}
                         total={xboxAccountsList.length}
-                        clientIp={clientIp}
-                        timezone={timezone}
-                        showShortcuts={isXboxFetching}
                       />
                     )}
                   </div>
@@ -1756,7 +1447,7 @@ socks5://host:port
                   </div>
                 </div>
 
-                <div className="flex items-center gap-4 justify-center flex-wrap">
+                <div className="flex items-center gap-4 justify-center">
                   <Button
                     onClick={checkHotmailAccounts}
                     disabled={isHotmailChecking || hotmailAccountsList.length === 0}
@@ -1766,7 +1457,7 @@ socks5://host:port
                     {isHotmailChecking ? (
                       <>
                         <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                        {isHotmailPaused ? 'Paused' : 'Checking...'}
+                        Checking...
                       </>
                     ) : (
                       <>
@@ -1776,46 +1467,15 @@ socks5://host:port
                     )}
                   </Button>
                   
-                  {isHotmailChecking && (
-                    <>
-                      <Button 
-                        variant="outline" 
-                        onClick={toggleHotmailPause}
-                        className="shadow-3d hover:shadow-glow transition-all"
-                      >
-                        <Pause className="w-4 h-4 mr-2" />
-                        {isHotmailPaused ? 'Resume' : 'Pause'}
-                      </Button>
-                      <Button 
-                        variant="destructive" 
-                        onClick={cancelHotmailCheck}
-                        className="shadow-3d hover:shadow-glow transition-all"
-                      >
-                        <Square className="w-4 h-4 mr-2" />
-                        Cancel
-                      </Button>
-                    </>
-                  )}
-                  
                   {hotmailResults.length > 0 && !isHotmailChecking && (
-                    <>
-                      <Button 
-                        variant="outline" 
-                        onClick={handleHotmailReset}
-                        className="shadow-3d hover:shadow-glow transition-all"
-                      >
-                        <RotateCcw className="w-4 h-4 mr-2" />
-                        Reset
-                      </Button>
-                      <Button 
-                        variant="secondary" 
-                        onClick={() => exportHotmailHits('all')}
-                        className="shadow-3d hover:shadow-glow transition-all"
-                      >
-                        <FileDown className="w-4 h-4 mr-2" />
-                        Export Hits
-                      </Button>
-                    </>
+                    <Button 
+                      variant="outline" 
+                      onClick={handleHotmailReset}
+                      className="shadow-3d hover:shadow-glow transition-all"
+                    >
+                      <RotateCcw className="w-4 h-4 mr-2" />
+                      Reset
+                    </Button>
                   )}
                 </div>
 
@@ -1826,14 +1486,11 @@ socks5://host:port
                       total={hotmailAccountsList.length}
                       status={hotmailStatus}
                     />
-                    {(isHotmailChecking || hotmailUpdates.length > 0) && (
+                    {isHotmailChecking && (
                       <LiveProgressFeed 
                         updates={hotmailUpdates}
                         isConnected={hotmailConnected}
                         total={hotmailAccountsList.length}
-                        clientIp={clientIp}
-                        timezone={timezone}
-                        showShortcuts={isHotmailChecking}
                       />
                     )}
                   </div>

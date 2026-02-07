@@ -6,7 +6,6 @@ export interface ProgressUpdate {
   index: number;
   total: number;
   email: string;
-  password?: string;
   status: 'checking' | 'success' | 'failed' | 'no_codes' | 'valid' | 'invalid' | '2fa' | 'locked' | 'error';
   message: string;
   timestamp: number;
@@ -36,29 +35,15 @@ export function useRealtimeProgress(sessionId: string | null) {
     channel
       .on('broadcast', { event: 'progress' }, (payload) => {
         const update = payload.payload as ProgressUpdate;
-        const MAX_UPDATES = 5000;
-
-        setUpdates((prev) => {
+        setUpdates(prev => {
           // Replace if same index exists, otherwise add
-          const existing = prev.findIndex((u) => u.index === update.index);
-
-          let next = prev;
+          const existing = prev.findIndex(u => u.index === update.index);
           if (existing >= 0) {
-            next = [...prev];
-            next[existing] = update;
-          } else {
-            next = [...prev, update];
+            const newUpdates = [...prev];
+            newUpdates[existing] = update;
+            return newUpdates;
           }
-
-          // Keep updates ordered so the feed/progress math is stable
-          next.sort((a, b) => a.index - b.index);
-
-          // Prevent unbounded memory growth on very large lists
-          if (next.length > MAX_UPDATES) {
-            next = next.slice(next.length - MAX_UPDATES);
-          }
-
-          return next;
+          return [...prev, update].slice(-100); // Keep last 100
         });
       })
       .subscribe((status) => {
