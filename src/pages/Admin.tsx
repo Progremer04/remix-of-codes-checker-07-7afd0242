@@ -5,7 +5,7 @@ import {
   Shield, Users, Gift, History, Plus, Trash2, 
   ToggleLeft, ToggleRight, Copy, Loader2, ArrowLeft,
   CheckCircle, XCircle, Download, Eye, Search, UserPlus,
-  FileText, Filter, Bell, Send, CalendarIcon, Zap, Clock, AlertCircle
+  FileText, Filter, Bell, Send, CalendarIcon
 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Background3D } from '@/components/Background3D';
@@ -46,17 +46,7 @@ interface UserProfile {
   displayName: string;
   isAdmin: boolean;
   services: string[];
-  serviceExpiry?: Record<string, string>; // service -> expiry date ISO string
   createdAt: string;
-  lastActive?: string;
-}
-
-interface LiveHit {
-  id: string;
-  service: string;
-  username: string;
-  hitData: any;
-  createdAt: number;
 }
 
 interface CheckHistoryItem {
@@ -97,12 +87,12 @@ export default function Admin() {
   const [codes, setCodes] = useState<RedeemCode[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [history, setHistory] = useState<CheckHistoryItem[]>([]);
-  const [liveHits, setLiveHits] = useState<LiveHit[]>([]);
   
   // New code form
   const [newCodeServices, setNewCodeServices] = useState<string[]>([]);
   const [newCodeMaxUses, setNewCodeMaxUses] = useState(1);
-  const [newCodeExpiryDateTime, setNewCodeExpiryDateTime] = useState('');
+  const [newCodeExpiryDate, setNewCodeExpiryDate] = useState<Date | undefined>(undefined);
+  const [newCodeExpiryTime, setNewCodeExpiryTime] = useState('23:59');
 
   // New user form
   const [newUserEmail, setNewUserEmail] = useState('');
@@ -113,9 +103,6 @@ export default function Admin() {
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [showUserDialog, setShowUserDialog] = useState(false);
 
-  // Service expiry for new users
-  const [newUserServiceExpiry, setNewUserServiceExpiry] = useState<Record<string, Date | undefined>>({});
-
   // History filters
   const [historyFilter, setHistoryFilter] = useState<string>('all');
   const [historySearch, setHistorySearch] = useState('');
@@ -124,18 +111,6 @@ export default function Admin() {
 
   // User search
   const [userSearch, setUserSearch] = useState('');
-
-  // Notification form
-  const [notifUserId, setNotifUserId] = useState('');
-  const [notifTitle, setNotifTitle] = useState('');
-  const [notifMessage, setNotifMessage] = useState('');
-  const [notifType, setNotifType] = useState<'info' | 'success' | 'warning' | 'service' | 'admin'>('info');
-  const [isSendingNotif, setIsSendingNotif] = useState(false);
-
-  // Selected user for details
-  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
-  const [showUserDetailsDialog, setShowUserDetailsDialog] = useState(false);
-  const [userServiceExpiry, setUserServiceExpiry] = useState<Record<string, Date | undefined>>({});
 
   useEffect(() => {
     if (!authLoading && (!user || !isAdmin)) {
@@ -181,30 +156,26 @@ export default function Admin() {
       }
     });
 
-    // Subscribe to history - reads from checkHistory/$uid paths (per Firebase rules)
-    const checkHistoryRef = ref(database, 'checkHistory');
-    onValue(checkHistoryRef, (snapshot) => {
+    // Subscribe to history with full results
+    const historyRef = ref(database, 'checkHistory');
+    onValue(historyRef, (snapshot) => {
       if (snapshot.exists()) {
-        const usersData = snapshot.val();
+        const data = snapshot.val();
         const historyList: CheckHistoryItem[] = [];
         
-        for (const [userId, userHistory] of Object.entries(usersData)) {
-          if (userHistory && typeof userHistory === 'object') {
-            for (const [historyId, item] of Object.entries(userHistory)) {
-              const historyItem = item as any;
-              historyList.push({
-                id: historyId,
-                oderId: historyId,
-                userId: userId,
-                username: historyItem.username || users.find(u => u.uid === userId)?.email || 'Unknown',
-                service: historyItem.service,
-                inputCount: historyItem.inputCount,
-                stats: historyItem.stats,
-                results: historyItem.results || [],
-                createdAt: historyItem.createdAt
-              });
-            }
-          }
+        for (const [oderId, item] of Object.entries(data)) {
+          const historyItem = item as any;
+          historyList.push({
+            id: oderId,
+            oderId: oderId,
+            userId: historyItem.userId,
+            username: historyItem.username || 'Unknown',
+            service: historyItem.service,
+            inputCount: historyItem.inputCount,
+            stats: historyItem.stats,
+            results: historyItem.results || [],
+            createdAt: historyItem.createdAt
+          });
         }
         
         setHistory(historyList.sort((a, b) => 
@@ -212,21 +183,6 @@ export default function Admin() {
         ));
       } else {
         setHistory([]);
-      }
-    });
-
-    // Subscribe to live hits from adminData (per Firebase rules)
-    const liveHitsRef = ref(database, 'adminData/liveHits');
-    onValue(liveHitsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const hitsList: LiveHit[] = Object.entries(data)
-          .map(([id, hit]) => ({ id, ...(hit as any) }))
-          .sort((a, b) => b.createdAt - a.createdAt)
-          .slice(0, 100);
-        setLiveHits(hitsList);
-      } else {
-        setLiveHits([]);
       }
     });
   };
@@ -243,10 +199,13 @@ export default function Admin() {
         'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Math.floor(Math.random() * 36)]
       ).join('');
       
-      // Build expiry datetime from datetime-local input
+      // Build expiry datetime
       let expiresAt: string | null = null;
-      if (newCodeExpiryDateTime) {
-        expiresAt = new Date(newCodeExpiryDateTime).toISOString();
+      if (newCodeExpiryDate) {
+        const [hours, minutes] = newCodeExpiryTime.split(':').map(Number);
+        const expiryDateTime = new Date(newCodeExpiryDate);
+        expiryDateTime.setHours(hours, minutes, 0, 0);
+        expiresAt = expiryDateTime.toISOString();
       }
 
       const codeData: Omit<RedeemCode, 'id' | 'code'> = {
@@ -264,7 +223,8 @@ export default function Admin() {
       toast.success(`Code generated: ${code}`);
       setNewCodeServices([]);
       setNewCodeMaxUses(1);
-      setNewCodeExpiryDateTime('');
+      setNewCodeExpiryDate(undefined);
+      setNewCodeExpiryTime('23:59');
       
       navigator.clipboard.writeText(code);
       toast.success('Code copied to clipboard!');
@@ -362,14 +322,6 @@ export default function Admin() {
       const userCredential = await createUserWithEmailAndPassword(auth, newUserEmail, newUserPassword);
       const newUser = userCredential.user;
       
-      // Build service expiry
-      const serviceExpiry: Record<string, string> = {};
-      for (const [service, date] of Object.entries(newUserServiceExpiry)) {
-        if (date && newUserServices.includes(service)) {
-          serviceExpiry[service] = date.toISOString();
-        }
-      }
-
       // Create user profile in Realtime Database
       await set(ref(database, `users/${newUser.uid}`), {
         uid: newUser.uid,
@@ -377,7 +329,6 @@ export default function Admin() {
         displayName: newUserDisplayName,
         isAdmin: newUserIsAdmin,
         services: newUserServices,
-        serviceExpiry,
         createdAt: new Date().toISOString()
       });
       
@@ -388,7 +339,6 @@ export default function Admin() {
       setNewUserPassword('');
       setNewUserDisplayName('');
       setNewUserServices([]);
-      setNewUserServiceExpiry({});
       setNewUserIsAdmin(false);
       setShowUserDialog(false);
       
@@ -419,109 +369,6 @@ export default function Admin() {
   const viewHistoryDetails = (item: CheckHistoryItem) => {
     setSelectedHistory(item);
     setShowHistoryDialog(true);
-  };
-
-  const viewUserDetails = (userProfile: UserProfile) => {
-    setSelectedUser(userProfile);
-    const expiry: Record<string, Date | undefined> = {};
-    if (userProfile.serviceExpiry) {
-      for (const [service, dateStr] of Object.entries(userProfile.serviceExpiry)) {
-        expiry[service] = new Date(dateStr);
-      }
-    }
-    setUserServiceExpiry(expiry);
-    setShowUserDetailsDialog(true);
-  };
-
-  const updateUserServiceExpiry = async () => {
-    if (!selectedUser) return;
-    
-    try {
-      const serviceExpiry: Record<string, string> = {};
-      for (const [service, date] of Object.entries(userServiceExpiry)) {
-        if (date) {
-          serviceExpiry[service] = date.toISOString();
-        }
-      }
-      
-      await set(ref(database, `users/${selectedUser.uid}/serviceExpiry`), serviceExpiry);
-      toast.success('Service expiry updated');
-      setShowUserDetailsDialog(false);
-    } catch (e) {
-      toast.error('Failed to update expiry');
-    }
-  };
-
-  const sendNotificationToUser = async () => {
-    if (!notifUserId || !notifTitle || !notifMessage) {
-      toast.error('Please fill all notification fields');
-      return;
-    }
-    
-    setIsSendingNotif(true);
-    try {
-      await sendNotification(notifUserId, {
-        type: notifType,
-        title: notifTitle,
-        message: notifMessage
-      });
-      
-      toast.success('Notification sent!');
-      setNotifTitle('');
-      setNotifMessage('');
-    } catch (e) {
-      toast.error('Failed to send notification');
-    }
-    setIsSendingNotif(false);
-  };
-
-  const sendNotificationToAll = async () => {
-    if (!notifTitle || !notifMessage) {
-      toast.error('Please fill notification title and message');
-      return;
-    }
-    
-    if (!confirm(`Send notification to all ${users.length} users?`)) return;
-    
-    setIsSendingNotif(true);
-    try {
-      for (const u of users) {
-        await sendNotification(u.uid, {
-          type: notifType,
-          title: notifTitle,
-          message: notifMessage
-        });
-      }
-      
-      toast.success(`Notification sent to ${users.length} users!`);
-      setNotifTitle('');
-      setNotifMessage('');
-    } catch (e) {
-      toast.error('Failed to send notifications');
-    }
-    setIsSendingNotif(false);
-  };
-
-  const clearLiveHits = async () => {
-    if (!confirm('Clear all live hits?')) return;
-    try {
-      await remove(ref(database, 'liveHits'));
-      toast.success('Live hits cleared');
-    } catch (e) {
-      toast.error('Failed to clear hits');
-    }
-  };
-
-  const isServiceExpired = (userProfile: UserProfile, service: string): boolean => {
-    if (!userProfile.serviceExpiry?.[service]) return false;
-    return new Date(userProfile.serviceExpiry[service]) < new Date();
-  };
-
-  const getServiceExpiryDays = (userProfile: UserProfile, service: string): number | null => {
-    if (!userProfile.serviceExpiry?.[service]) return null;
-    const expiry = new Date(userProfile.serviceExpiry[service]);
-    const now = new Date();
-    return Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
   };
 
   const exportResults = (item: CheckHistoryItem, type: 'all' | 'hits' | 'valid') => {
@@ -654,7 +501,7 @@ export default function Admin() {
         </div>
 
         <Tabs defaultValue="codes" className="w-full">
-          <TabsList className="grid w-full max-w-3xl grid-cols-6 glass-card mb-8">
+          <TabsList className="grid w-full max-w-xl grid-cols-4 glass-card mb-8">
             <TabsTrigger value="codes">
               <Gift className="w-4 h-4 mr-2" />
               Codes
@@ -662,14 +509,6 @@ export default function Admin() {
             <TabsTrigger value="users">
               <Users className="w-4 h-4 mr-2" />
               Users
-            </TabsTrigger>
-            <TabsTrigger value="notifications">
-              <Bell className="w-4 h-4 mr-2" />
-              Notify
-            </TabsTrigger>
-            <TabsTrigger value="livehits">
-              <Zap className="w-4 h-4 mr-2" />
-              Live Hits
             </TabsTrigger>
             <TabsTrigger value="history">
               <History className="w-4 h-4 mr-2" />
@@ -734,20 +573,47 @@ export default function Admin() {
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="codeExpiry">Expiry Date & Time (optional)</Label>
-                  <input
-                    type="datetime-local"
-                    id="codeExpiry"
-                    value={newCodeExpiryDateTime}
-                    onChange={(e) => setNewCodeExpiryDateTime(e.target.value)}
-                    min={new Date().toISOString().slice(0, 16)}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  />
-                  {newCodeExpiryDateTime && (
+                  <Label>Expiry Date & Time (optional)</Label>
+                  <div className="flex gap-2">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={cn(
+                            "flex-1 justify-start text-left font-normal",
+                            !newCodeExpiryDate && "text-muted-foreground"
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {newCodeExpiryDate ? format(newCodeExpiryDate, "PPP") : "Pick a date"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={newCodeExpiryDate}
+                          onSelect={setNewCodeExpiryDate}
+                          disabled={(date) => date < new Date()}
+                          initialFocus
+                          className="p-3 pointer-events-auto"
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    <Input
+                      type="time"
+                      value={newCodeExpiryTime}
+                      onChange={(e) => setNewCodeExpiryTime(e.target.value)}
+                      className="w-28"
+                    />
+                  </div>
+                  {newCodeExpiryDate && (
                     <Button 
                       variant="ghost" 
                       size="sm" 
-                      onClick={() => setNewCodeExpiryDateTime('')}
+                      onClick={() => {
+                        setNewCodeExpiryDate(undefined);
+                        setNewCodeExpiryTime('23:59');
+                      }}
                       className="text-xs text-muted-foreground"
                     >
                       Clear expiry
@@ -941,14 +807,7 @@ export default function Admin() {
                   <div key={userProfile.uid} className="p-4 rounded-lg bg-secondary/30 border border-border/50">
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <div>
-                        <div className="font-medium flex items-center gap-2">
-                          {userProfile.displayName}
-                          {userProfile.lastActive && (
-                            <span className="text-xs text-muted-foreground">
-                              (Last: {new Date(userProfile.lastActive).toLocaleDateString()})
-                            </span>
-                          )}
-                        </div>
+                        <div className="font-medium">{userProfile.displayName}</div>
                         <div className="text-sm text-muted-foreground">{userProfile.email}</div>
                         <div className="text-xs text-muted-foreground">
                           Joined: {new Date(userProfile.createdAt).toLocaleDateString()}
@@ -961,25 +820,6 @@ export default function Admin() {
                             Admin
                           </span>
                         )}
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => viewUserDetails(userProfile)}
-                          title="View Details & Expiry"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => {
-                            setNotifUserId(userProfile.uid);
-                            toast.info(`Selected ${userProfile.displayName} for notification`);
-                          }}
-                          title="Send Notification"
-                        >
-                          <Bell className="w-4 h-4" />
-                        </Button>
                         <Button 
                           variant="ghost" 
                           size="sm"
@@ -1027,27 +867,17 @@ export default function Admin() {
                       <div className="flex flex-wrap gap-1">
                         {ALL_SERVICES.map(service => {
                           const hasService = userProfile.services?.includes(service);
-                          const expiryDays = getServiceExpiryDays(userProfile, service);
-                          const isExpired = isServiceExpired(userProfile, service);
-                          
                           return (
                             <button
                               key={service}
                               onClick={() => grantService(userProfile.uid, service)}
-                              className={`px-2 py-0.5 text-xs rounded-full transition-colors flex items-center gap-1 ${
+                              className={`px-2 py-0.5 text-xs rounded-full transition-colors ${
                                 hasService 
-                                  ? isExpired
-                                    ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
-                                    : 'bg-success/20 text-success hover:bg-success/30' 
+                                  ? 'bg-success/20 text-success hover:bg-success/30' 
                                   : 'bg-secondary text-muted-foreground hover:bg-secondary/80'
                               }`}
                             >
                               {SERVICE_LABELS[service] || service}
-                              {hasService && expiryDays !== null && (
-                                <span className={`text-[10px] ${isExpired ? 'text-destructive' : expiryDays <= 7 ? 'text-warning' : ''}`}>
-                                  ({isExpired ? 'exp' : `${expiryDays}d`})
-                                </span>
-                              )}
                             </button>
                           );
                         })}
@@ -1060,169 +890,6 @@ export default function Admin() {
                   <p className="text-center text-muted-foreground py-8">No users found</p>
                 )}
               </div>
-            </div>
-          </TabsContent>
-
-          {/* Notifications Tab */}
-          <TabsContent value="notifications" className="space-y-6">
-            <div className="glass-card p-6 rounded-xl">
-              <h3 className="font-semibold mb-4 flex items-center gap-2">
-                <Send className="w-5 h-5" />
-                Send Notification
-              </h3>
-              
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Recipient</Label>
-                    <Select value={notifUserId} onValueChange={setNotifUserId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select user..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {users.map(u => (
-                          <SelectItem key={u.uid} value={u.uid}>
-                            {u.displayName} ({u.email})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label>Type</Label>
-                    <Select value={notifType} onValueChange={(v) => setNotifType(v as any)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="info">ℹ️ Info</SelectItem>
-                        <SelectItem value="success">✅ Success</SelectItem>
-                        <SelectItem value="warning">⚠️ Warning</SelectItem>
-                        <SelectItem value="service">🎁 Service</SelectItem>
-                        <SelectItem value="admin">🛡️ Admin</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label>Title</Label>
-                    <Input
-                      value={notifTitle}
-                      onChange={(e) => setNotifTitle(e.target.value)}
-                      placeholder="Notification title"
-                    />
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label>Message</Label>
-                    <Textarea
-                      value={notifMessage}
-                      onChange={(e) => setNotifMessage(e.target.value)}
-                      placeholder="Notification message..."
-                      rows={3}
-                    />
-                  </div>
-                  
-                  <div className="flex gap-2">
-                    <Button 
-                      onClick={sendNotificationToUser} 
-                      disabled={isSendingNotif || !notifUserId}
-                      className="flex-1"
-                    >
-                      {isSendingNotif ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
-                      Send to User
-                    </Button>
-                    <Button 
-                      onClick={sendNotificationToAll} 
-                      disabled={isSendingNotif}
-                      variant="secondary"
-                    >
-                      Send to All ({users.length})
-                    </Button>
-                  </div>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label>Preview</Label>
-                  <div className="p-4 rounded-lg bg-secondary/50 border border-border/50">
-                    <div className="flex items-start gap-3">
-                      <div className="mt-0.5">
-                        {notifType === 'info' && <AlertCircle className="w-4 h-4 text-blue-500" />}
-                        {notifType === 'success' && <CheckCircle className="w-4 h-4 text-success" />}
-                        {notifType === 'warning' && <AlertCircle className="w-4 h-4 text-warning" />}
-                        {notifType === 'service' && <Gift className="w-4 h-4 text-primary" />}
-                        {notifType === 'admin' && <Shield className="w-4 h-4 text-primary" />}
-                      </div>
-                      <div className="flex-1">
-                        <div className="font-medium text-sm">{notifTitle || 'Title'}</div>
-                        <div className="text-xs text-muted-foreground">{notifMessage || 'Message'}</div>
-                        <div className="text-xs text-muted-foreground mt-1">Just now</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </TabsContent>
-
-          {/* Live Hits Tab */}
-          <TabsContent value="livehits" className="space-y-6">
-            <div className="glass-card p-6 rounded-xl">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-success animate-pulse" />
-                  Live Hits ({liveHits.length})
-                </h3>
-                <Button variant="outline" size="sm" onClick={clearLiveHits}>
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Clear All
-                </Button>
-              </div>
-              
-              {liveHits.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Zap className="w-12 h-12 mx-auto mb-4 opacity-30" />
-                  <p>No live hits yet</p>
-                  <p className="text-sm">Hits will appear here in real-time when checkers find valid results</p>
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-[500px] overflow-auto">
-                  {liveHits.map(hit => (
-                    <div 
-                      key={hit.id} 
-                      className="p-3 rounded-lg bg-success/10 border border-success/30 animate-pulse-glow"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <CheckCircle className="w-4 h-4 text-success" />
-                          <span className="font-medium text-sm">{hit.username}</span>
-                          <span className="px-2 py-0.5 text-xs rounded-full bg-primary/20 text-primary">
-                            {SERVICE_LABELS[hit.service] || hit.service}
-                          </span>
-                        </div>
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(hit.createdAt).toLocaleTimeString()}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-xs font-mono text-muted-foreground truncate">
-                        {hit.service === 'manus_checker' && hit.hitData && (
-                          <span>{hit.hitData.email} | {hit.hitData.plan} | Credits: {hit.hitData.totalCredits}</span>
-                        )}
-                        {hit.service === 'hotmail_validator' && hit.hitData && (
-                          <span>{hit.hitData.email} | {hit.hitData.msStatus || 'Valid'}</span>
-                        )}
-                        {hit.service === 'xbox_fetcher' && hit.hitData && (
-                          <span>{hit.hitData.email} | {hit.hitData.codes?.length || 0} codes</span>
-                        )}
-                        {hit.service === 'codes_checker' && hit.hitData && (
-                          <span>{hit.hitData.code} | {hit.hitData.title}</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           </TabsContent>
 
@@ -1594,136 +1261,6 @@ export default function Admin() {
                   Showing first 100 of {selectedHistory.results.length} results. Export for full data.
                 </p>
               )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* User Details Dialog */}
-      <Dialog open={showUserDetailsDialog} onOpenChange={setShowUserDetailsDialog}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>User Details - {selectedUser?.displayName}</DialogTitle>
-          </DialogHeader>
-          
-          {selectedUser && (
-            <div className="space-y-6">
-              {/* User Info */}
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <Label className="text-muted-foreground">Email</Label>
-                  <p className="font-medium">{selectedUser.email}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">UID</Label>
-                  <p className="font-mono text-xs">{selectedUser.uid.substring(0, 16)}...</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Joined</Label>
-                  <p>{new Date(selectedUser.createdAt).toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">Status</Label>
-                  <p className="flex items-center gap-2">
-                    {selectedUser.isAdmin ? (
-                      <span className="px-2 py-0.5 text-xs rounded-full bg-primary text-primary-foreground">Admin</span>
-                    ) : (
-                      <span className="px-2 py-0.5 text-xs rounded-full bg-secondary text-muted-foreground">User</span>
-                    )}
-                  </p>
-                </div>
-              </div>
-
-              {/* Service Expiry Settings */}
-              <div className="space-y-3">
-                <Label className="flex items-center gap-2">
-                  <Clock className="w-4 h-4" />
-                  Service Expiry Dates
-                </Label>
-                <div className="space-y-2 max-h-[200px] overflow-auto">
-                  {ALL_SERVICES.map(service => {
-                    const hasService = selectedUser.services?.includes(service);
-                    if (!hasService) return null;
-                    
-                    return (
-                      <div key={service} className="flex items-center justify-between p-2 rounded-lg bg-secondary/30">
-                        <span className="text-sm">{SERVICE_LABELS[service]}</span>
-                        <div className="flex items-center gap-2">
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className={cn(
-                                  "h-8 text-xs",
-                                  !userServiceExpiry[service] && "text-muted-foreground"
-                                )}
-                              >
-                                <CalendarIcon className="mr-2 h-3 w-3" />
-                                {userServiceExpiry[service] 
-                                  ? format(userServiceExpiry[service]!, "PP") 
-                                  : "No expiry"
-                                }
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="end">
-                              <Calendar
-                                mode="single"
-                                selected={userServiceExpiry[service]}
-                                onSelect={(date) => setUserServiceExpiry({ ...userServiceExpiry, [service]: date })}
-                                initialFocus
-                                className="p-3 pointer-events-auto"
-                              />
-                            </PopoverContent>
-                          </Popover>
-                          {userServiceExpiry[service] && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 px-2"
-                              onClick={() => {
-                                const updated = { ...userServiceExpiry };
-                                delete updated[service];
-                                setUserServiceExpiry(updated);
-                              }}
-                            >
-                              <XCircle className="w-3 h-3" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                
-                <Button onClick={updateUserServiceExpiry} className="w-full gradient-primary">
-                  <CheckCircle className="w-4 h-4 mr-2" />
-                  Save Expiry Settings
-                </Button>
-              </div>
-
-              {/* Quick Actions */}
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setNotifUserId(selectedUser.uid);
-                    setShowUserDetailsDialog(false);
-                  }}
-                >
-                  <Bell className="w-4 h-4 mr-2" />
-                  Send Notification
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => grantAllServices(selectedUser.uid)}
-                >
-                  <Gift className="w-4 h-4 mr-2" />
-                  Grant All Services
-                </Button>
-              </div>
             </div>
           )}
         </DialogContent>

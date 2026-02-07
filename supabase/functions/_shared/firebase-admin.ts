@@ -9,29 +9,6 @@ interface FirebaseCredentials {
 
 let cachedToken: { token: string; expires: number } | null = null;
 
-// Safe base64url encoding that handles binary data properly
-function base64urlEncode(data: Uint8Array | string): string {
-  let bytes: Uint8Array;
-  
-  if (typeof data === 'string') {
-    // For strings (like JSON), encode as UTF-8 first
-    bytes = new TextEncoder().encode(data);
-  } else {
-    bytes = data;
-  }
-  
-  // Convert Uint8Array to base64 using a safe method
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  
-  return btoa(binary)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
-}
-
 export async function getFirebaseToken(): Promise<string> {
   // Check if we have a cached token that's still valid
   if (cachedToken && Date.now() < cachedToken.expires - 60000) {
@@ -57,8 +34,16 @@ export async function getFirebaseToken(): Promise<string> {
     scope: "https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email"
   };
 
-  const headerB64 = base64urlEncode(JSON.stringify(header));
-  const claimsB64 = base64urlEncode(JSON.stringify(claims));
+  const encoder = new TextEncoder();
+  
+  // Base64URL encode
+  const base64url = (data: Uint8Array | string): string => {
+    const str = typeof data === 'string' ? data : new TextDecoder().decode(data);
+    return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  };
+  
+  const headerB64 = base64url(JSON.stringify(header));
+  const claimsB64 = base64url(JSON.stringify(claims));
   const signatureInput = `${headerB64}.${claimsB64}`;
   
   // Import private key and sign
@@ -77,14 +62,13 @@ export async function getFirebaseToken(): Promise<string> {
     ['sign']
   );
   
-  const encoder = new TextEncoder();
   const signature = await crypto.subtle.sign(
     'RSASSA-PKCS1-v1_5',
     cryptoKey,
     encoder.encode(signatureInput)
   );
   
-  const signatureB64 = base64urlEncode(new Uint8Array(signature));
+  const signatureB64 = base64url(new Uint8Array(signature));
   const jwt = `${signatureInput}.${signatureB64}`;
   
   // Exchange JWT for access token
@@ -112,131 +96,83 @@ export async function getFirebaseToken(): Promise<string> {
 const FIREBASE_DB_URL = "https://alliche-fetcher-default-rtdb.firebaseio.com";
 
 export async function firebaseGet<T>(path: string): Promise<T | null> {
-  try {
-    const token = await getFirebaseToken();
-    
-    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json"
-      }
-    });
-    
-    if (!res.ok) {
-      const errorText = await res.text();
-      console.error(`Firebase GET error: ${res.status} - ${errorText}`);
-      return null;
-    }
-    
-    return await res.json();
-  } catch (e) {
-    console.error("Firebase GET failed:", e);
+  const token = await getFirebaseToken();
+  
+  const res = await fetch(`${FIREBASE_DB_URL}/${path}.json?auth=${token}`);
+  
+  if (!res.ok) {
+    console.error(`Firebase GET error: ${res.status}`);
     return null;
   }
+  
+  return await res.json();
 }
 
 export async function firebaseSet(path: string, data: any): Promise<boolean> {
-  try {
-    const token = await getFirebaseToken();
-    
-    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
-      method: "PUT",
-      headers: { 
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json" 
-      },
-      body: JSON.stringify(data)
-    });
-    
-    if (!res.ok) {
-      const errorText = await res.text();
-      console.error(`Firebase SET error: ${res.status} - ${errorText}`);
-      return false;
-    }
-    
-    return true;
-  } catch (e) {
-    console.error("Firebase SET failed:", e);
+  const token = await getFirebaseToken();
+  
+  const res = await fetch(`${FIREBASE_DB_URL}/${path}.json?auth=${token}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data)
+  });
+  
+  if (!res.ok) {
+    console.error(`Firebase SET error: ${res.status}`);
     return false;
   }
+  
+  return true;
 }
 
 export async function firebasePush(path: string, data: any): Promise<string | null> {
-  try {
-    const token = await getFirebaseToken();
-    
-    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
-      method: "POST",
-      headers: { 
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json" 
-      },
-      body: JSON.stringify(data)
-    });
-    
-    if (!res.ok) {
-      const errorText = await res.text();
-      console.error(`Firebase PUSH error: ${res.status} - ${errorText}`);
-      return null;
-    }
-    
-    const result = await res.json();
-    return result.name;
-  } catch (e) {
-    console.error("Firebase PUSH failed:", e);
+  const token = await getFirebaseToken();
+  
+  const res = await fetch(`${FIREBASE_DB_URL}/${path}.json?auth=${token}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data)
+  });
+  
+  if (!res.ok) {
+    console.error(`Firebase PUSH error: ${res.status}`);
     return null;
   }
+  
+  const result = await res.json();
+  return result.name;
 }
 
 export async function firebaseUpdate(path: string, data: any): Promise<boolean> {
-  try {
-    const token = await getFirebaseToken();
-    
-    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
-      method: "PATCH",
-      headers: { 
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json" 
-      },
-      body: JSON.stringify(data)
-    });
-    
-    if (!res.ok) {
-      const errorText = await res.text();
-      console.error(`Firebase UPDATE error: ${res.status} - ${errorText}`);
-      return false;
-    }
-    
-    return true;
-  } catch (e) {
-    console.error("Firebase UPDATE failed:", e);
+  const token = await getFirebaseToken();
+  
+  const res = await fetch(`${FIREBASE_DB_URL}/${path}.json?auth=${token}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data)
+  });
+  
+  if (!res.ok) {
+    console.error(`Firebase UPDATE error: ${res.status}`);
     return false;
   }
+  
+  return true;
 }
 
 export async function firebaseDelete(path: string): Promise<boolean> {
-  try {
-    const token = await getFirebaseToken();
-    
-    const res = await fetch(`${FIREBASE_DB_URL}/${path}.json`, {
-      method: "DELETE",
-      headers: {
-        "Authorization": `Bearer ${token}`
-      }
-    });
-    
-    if (!res.ok) {
-      const errorText = await res.text();
-      console.error(`Firebase DELETE error: ${res.status} - ${errorText}`);
-      return false;
-    }
-    
-    return true;
-  } catch (e) {
-    console.error("Firebase DELETE failed:", e);
+  const token = await getFirebaseToken();
+  
+  const res = await fetch(`${FIREBASE_DB_URL}/${path}.json?auth=${token}`, {
+    method: "DELETE"
+  });
+  
+  if (!res.ok) {
+    console.error(`Firebase DELETE error: ${res.status}`);
     return false;
   }
+  
+  return true;
 }
 
 // Helper to verify Firebase ID token (for auth)
@@ -246,10 +182,7 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: str
     const parts = idToken.split('.');
     if (parts.length !== 3) return null;
     
-    // Base64url decode the payload
-    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const padding = '='.repeat((4 - base64.length % 4) % 4);
-    const payload = JSON.parse(atob(base64 + padding));
+    const payload = JSON.parse(atob(parts[1]));
     
     // Verify token is not expired
     if (payload.exp && payload.exp < Date.now() / 1000) {

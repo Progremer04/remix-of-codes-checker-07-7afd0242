@@ -13,7 +13,6 @@ import { ProgressBar } from '@/components/ProgressBar';
 import { Background3D } from '@/components/Background3D';
 import { UserDashboard } from '@/components/UserDashboard';
 import { ManusFileUpload, UploadedFile } from '@/components/ManusFileUpload';
-import { LiveProgressFeed } from '@/components/LiveProgressFeed';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -25,7 +24,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { useFirebaseAuth } from '@/hooks/useFirebaseAuth';
 import { ref, push, set } from 'firebase/database';
 import { database } from '@/integrations/firebase/config';
-import { useRealtimeProgress, generateSessionId } from '@/hooks/useRealtimeProgress';
 import JSZip from 'jszip';
 
 interface ClaimResult {
@@ -193,17 +191,6 @@ export default function Index() {
   const [hotmailCheckMode, setHotmailCheckMode] = useState('all');
   const [hotmailProxies, setHotmailProxies] = useState('');
   const [hotmailSessionInfo, setHotmailSessionInfo] = useState<SessionInfo | null>(null);
-  
-  // Realtime progress session IDs
-  const [hotmailSessionId, setHotmailSessionId] = useState<string | null>(null);
-  const [xboxSessionId, setXboxSessionId] = useState<string | null>(null);
-  const [manusSessionId, setManusSessionId] = useState<string | null>(null);
-  
-  // Realtime progress hooks
-  const { updates: hotmailUpdates, isConnected: hotmailConnected, clearUpdates: clearHotmailUpdates } = useRealtimeProgress(hotmailSessionId);
-  const { updates: xboxUpdates, isConnected: xboxConnected, clearUpdates: clearXboxUpdates } = useRealtimeProgress(xboxSessionId);
-  const { updates: manusUpdates, isConnected: manusConnected, clearUpdates: clearManusUpdates } = useRealtimeProgress(manusSessionId);
-  
   const username = userData?.displayName || user?.email || 'User';
 
   // Codes Checker computed values
@@ -324,30 +311,12 @@ export default function Index() {
     return userServices.includes(service);
   };
 
-  const getFirebaseIdToken = async (): Promise<string | null> => {
-    try {
-      if (!user) return null;
-      return await user.getIdToken();
-    } catch (e) {
-      console.warn('Failed to get Firebase ID token:', e);
-      return null;
-    }
-  };
-
-  const invokeBackendFunction = async <TData,>(functionName: string, body: any) => {
-    const firebaseToken = await getFirebaseIdToken();
-    return await supabase.functions.invoke<TData>(functionName, {
-      body,
-      headers: firebaseToken ? { 'x-firebase-token': firebaseToken } : undefined,
-    });
-  };
-
-  // Save history to Firebase (user-scoped path to satisfy RTDB rules)
+  // Save history to Firebase with full results
   const saveHistory = async (service: string, inputCount: number, stats: any, results?: any[]) => {
     if (!user) return;
-
+    
     try {
-      const historyRef = ref(database, `users/${user.uid}/checkHistory`);
+      const historyRef = ref(database, 'checkHistory');
       const newHistoryRef = push(historyRef);
       await set(newHistoryRef, {
         userId: user.uid,
@@ -356,7 +325,7 @@ export default function Index() {
         inputCount,
         stats,
         results: results || [],
-        createdAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
       });
     } catch (e) {
       console.error('Failed to save history:', e);
@@ -382,8 +351,6 @@ export default function Index() {
     try {
       setCheckStatus('Processing codes...');
       
-      const firebaseToken = await getFirebaseIdToken();
-
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/check-codes`,
         {
@@ -391,10 +358,9 @@ export default function Index() {
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-            ...(firebaseToken ? { 'x-firebase-token': firebaseToken } : {}),
+            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
           },
-          body: JSON.stringify({ wlids: wlidsList, codes: codesList, threads: checkThreads, username }),
+          body: JSON.stringify({ wlids: wlidsList, codes: codesList, threads: checkThreads, username })
         }
       );
 
@@ -538,16 +504,13 @@ export default function Index() {
     setClaimStatus('Connecting to server...');
 
     try {
-      const { data, error } = await invokeBackendFunction<any>('claim-wlids', {
-        accounts: accountsList,
-        threads: claimThreads,
-        username,
+      const { data, error } = await supabase.functions.invoke('claim-wlids', {
+        body: { accounts: accountsList, threads: claimThreads, username }
       });
 
       if (error) {
         console.error('Edge function error:', error);
-        const errorMsg = error.message || 'Server connection error';
-        toast.error(errorMsg.includes('Failed to fetch') ? 'Network error - please check your connection' : errorMsg);
+        toast.error('Server connection error');
         setIsClaiming(false);
         return;
       }
@@ -591,26 +554,19 @@ export default function Index() {
       return;
     }
 
-    const sessionId = generateSessionId();
-    setXboxSessionId(sessionId);
-    clearXboxUpdates();
     setIsXboxFetching(true);
     setXboxResults([]);
     setXboxProgress(0);
     setXboxStatus('Connecting to server...');
 
     try {
-      const { data, error } = await invokeBackendFunction<any>('xbox-fetcher', {
-        accounts: xboxAccountsList,
-        threads: xboxThreads,
-        username,
-        sessionId,
+      const { data, error } = await supabase.functions.invoke('xbox-fetcher', {
+        body: { accounts: xboxAccountsList, threads: xboxThreads, username }
       });
 
       if (error) {
         console.error('Edge function error:', error);
-        const errorMsg = error.message || 'Server connection error';
-        toast.error(errorMsg.includes('Failed to fetch') ? 'Network error - please check your connection' : errorMsg);
+        toast.error('Server connection error');
         setIsXboxFetching(false);
         return;
       }
@@ -669,25 +625,18 @@ export default function Index() {
         userAgent: navigator.userAgent
       };
 
-      const { data, error } = await invokeBackendFunction<any>('manus-checker', {
-        cookies: manusCookiesList,
-        threads: manusThreads,
-        username,
-        clientInfo,
+      const { data, error } = await supabase.functions.invoke('manus-checker', {
+        body: { 
+          cookies: manusCookiesList, 
+          threads: manusThreads, 
+          username,
+          clientInfo
+        }
       });
 
       if (error) {
-        console.error('Manus Edge function error:', error, 'Error details:', JSON.stringify(error));
-        const errorMsg = error.message || 'Server connection error';
-        toast.error(errorMsg.includes('Failed to fetch') ? 'Network error - please check your connection' : errorMsg);
-        setIsManusChecking(false);
-        return;
-      }
-
-      console.log('Manus response:', data);
-
-      if (!data) {
-        toast.error('Empty response from server');
+        console.error('Edge function error:', error);
+        toast.error('Server connection error');
         setIsManusChecking(false);
         return;
       }
@@ -767,7 +716,7 @@ export default function Index() {
     toast.success(`Downloaded ${hits.length} hits as ZIP`);
   };
 
-  // Hotmail Checker - Background processing mode
+  // Hotmail Checker functions
   const checkHotmailAccounts = async () => {
     if (!hasServiceAccess('hotmail_validator')) {
       toast.error('You need to redeem a code to access Hotmail Validator');
@@ -779,115 +728,69 @@ export default function Index() {
       return;
     }
 
-    const sessionId = generateSessionId();
-    setHotmailSessionId(sessionId);
-    clearHotmailUpdates();
     setIsHotmailChecking(true);
     setHotmailResults([]);
     setHotmailProgress(0);
     setHotmailSessionInfo(null);
-    setHotmailStatus(`Starting check of ${hotmailAccountsList.length} accounts...`);
-
-    const startTime = Date.now();
+    setHotmailStatus('Connecting to server...');
 
     try {
+      // Parse proxies from textarea
       const proxyList = hotmailProxies.split('\n').map(p => p.trim()).filter(p => p.length > 0);
+      
+      // Get client info
       const clientInfo = {
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         country: navigator.language?.split('-')[1] || 'Unknown',
         userAgent: navigator.userAgent
       };
 
-      // This returns immediately - processing happens in background
-      const { data, error } = await invokeBackendFunction<any>('hotmail-checker', {
-        accounts: hotmailAccountsList,
-        checkMode: hotmailCheckMode,
-        threads: hotmailThreads,
-        proxies: proxyList,
-        clientInfo,
-        sessionId,
+      const { data, error } = await supabase.functions.invoke('hotmail-checker', {
+        body: { 
+          accounts: hotmailAccountsList, 
+          checkMode: hotmailCheckMode,
+          threads: hotmailThreads,
+          proxies: proxyList,
+          clientInfo
+        }
       });
 
       if (error) {
-        console.error('Hotmail Edge function error:', error);
-        toast.error(error.message || 'Server connection error');
+        console.error('Edge function error:', error);
+        toast.error('Server connection error');
         setIsHotmailChecking(false);
         return;
       }
 
-      console.log('Hotmail background job started:', data);
-      
-      if (data?.status === 'processing') {
-        toast.success(`Processing ${data.total} accounts in background. Watch the live feed!`);
-        setHotmailStatus(`Processing ${data.total} accounts...`);
-        
-        // The realtime updates will come through the useRealtimeProgress hook
-        // We'll collect results from the updates
-      } else if (data?.error) {
+      if (data.error) {
         toast.error(data.error);
         setIsHotmailChecking(false);
         return;
       }
 
+      setHotmailResults(data.results);
+      setHotmailSessionInfo(data.sessionInfo);
+      setHotmailProgress(hotmailAccountsList.length);
+      setHotmailStatus('Complete!');
+      
+      const duration = data.sessionInfo?.duration || 'N/A';
+      toast.success(`Checked ${data.stats?.total || 0} accounts in ${duration}, ${data.stats?.valid || 0} valid`);
+      
+      await saveHistory('hotmail_validator', hotmailAccountsList.length, data.stats, data.results);
+
     } catch (err) {
       console.error('Error:', err);
       toast.error('An unexpected error occurred');
+    } finally {
       setIsHotmailChecking(false);
     }
   };
-
-  // Watch for completion in realtime updates
-  useEffect(() => {
-    if (!isHotmailChecking || hotmailUpdates.length === 0) return;
-    
-    const lastUpdate = hotmailUpdates[hotmailUpdates.length - 1];
-    
-    // Update progress
-    const completed = hotmailUpdates.filter(u => u.status !== 'checking').length;
-    setHotmailProgress(completed);
-    
-    // Check for completion message
-    if (lastUpdate?.email === 'COMPLETE' || lastUpdate?.message?.includes('Done!')) {
-      setIsHotmailChecking(false);
-      setHotmailStatus('Complete!');
-      
-      // Build results from updates
-      const results: HotmailCheckResult[] = hotmailUpdates
-        .filter(u => u.email !== 'COMPLETE' && u.status !== 'checking')
-        .map(u => ({
-          email: u.email,
-          password: '',
-          status: u.status,
-        }));
-      
-      setHotmailResults(results);
-      
-      // Calculate stats from updates
-      const valid = hotmailUpdates.filter(u => u.status === 'valid' || u.status === 'success').length;
-      const invalid = hotmailUpdates.filter(u => u.status === 'invalid' || u.status === 'failed').length;
-      const twoFa = hotmailUpdates.filter(u => u.status === '2fa').length;
-      
-      const duration = ((Date.now() - (hotmailUpdates[0]?.timestamp || Date.now())) / 1000).toFixed(1);
-      
-      setHotmailSessionInfo({
-        startTime: new Date(hotmailUpdates[0]?.timestamp || Date.now()).toISOString(),
-        endTime: new Date().toISOString(),
-        duration: `${duration}s`,
-        threadsUsed: hotmailThreads,
-        accountsProcessed: hotmailUpdates.filter(u => u.email !== 'COMPLETE').length,
-        successRate: `${((valid / Math.max(results.length, 1)) * 100).toFixed(1)}%`
-      });
-      
-      toast.success(`Complete! ${valid} valid, ${invalid} invalid, ${twoFa} 2FA`);
-    }
-  }, [hotmailUpdates, isHotmailChecking]);
 
   const handleHotmailReset = () => {
     setHotmailResults([]);
     setHotmailProgress(0);
     setHotmailStatus('');
     setHotmailSessionInfo(null);
-    clearHotmailUpdates();
   };
 
   // Redeem code handler
@@ -1321,19 +1224,12 @@ export default function Index() {
                 </div>
 
                 {(isXboxFetching || xboxProgress > 0) && (
-                  <div className="max-w-2xl mx-auto space-y-4">
+                  <div className="max-w-2xl mx-auto">
                     <ProgressBar
                       current={xboxProgress}
                       total={xboxAccountsList.length}
                       status={xboxStatus}
                     />
-                    {isXboxFetching && (
-                      <LiveProgressFeed 
-                        updates={xboxUpdates}
-                        isConnected={xboxConnected}
-                        total={xboxAccountsList.length}
-                      />
-                    )}
                   </div>
                 )}
 
@@ -1480,19 +1376,12 @@ socks5://host:port
                 </div>
 
                 {(isHotmailChecking || hotmailProgress > 0) && (
-                  <div className="max-w-2xl mx-auto space-y-4">
+                  <div className="max-w-2xl mx-auto">
                     <ProgressBar
                       current={hotmailProgress}
                       total={hotmailAccountsList.length}
                       status={hotmailStatus}
                     />
-                    {isHotmailChecking && (
-                      <LiveProgressFeed 
-                        updates={hotmailUpdates}
-                        isConnected={hotmailConnected}
-                        total={hotmailAccountsList.length}
-                      />
-                    )}
                   </div>
                 )}
 

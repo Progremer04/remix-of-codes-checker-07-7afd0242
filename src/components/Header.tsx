@@ -1,5 +1,4 @@
 import { Sparkles, Zap, LogOut, User } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { NotificationBell } from '@/components/NotificationBell';
 
@@ -9,8 +8,6 @@ interface HeaderProps {
 }
 
 export function Header({ username, onLogout }: HeaderProps) {
-  const navigate = useNavigate();
-
   return (
     <header className="relative border-b border-border/50 glass">
       {/* Glow effect */}
@@ -18,7 +15,7 @@ export function Header({ username, onLogout }: HeaderProps) {
       
       <div className="container mx-auto px-4 py-5 relative">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4 cursor-pointer" onClick={() => navigate('/')}>
+          <div className="flex items-center gap-4">
             <div className="relative">
               <div className="absolute inset-0 gradient-primary blur-xl opacity-50" />
               <div className="relative p-3 rounded-xl gradient-primary shadow-glow">
@@ -39,13 +36,10 @@ export function Header({ username, onLogout }: HeaderProps) {
             {username && (
               <div className="flex items-center gap-3">
                 <NotificationBell />
-                <button
-                  onClick={() => navigate('/profile')}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary/50 border border-border/50 hover:bg-secondary/80 transition-colors cursor-pointer"
-                >
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary/50 border border-border/50">
                   <User className="w-4 h-4 text-primary" />
                   <span className="text-sm font-medium text-foreground">{username}</span>
-                </button>
+                </div>
                 {onLogout && (
                   <Button
                     variant="ghost"

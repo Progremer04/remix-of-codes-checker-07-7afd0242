@@ -2,15 +2,13 @@ import { useState, useEffect, useMemo } from 'react';
 import { 
   History, Download, Eye, Calendar, Clock, 
   CheckCircle, XCircle, Package, Filter, Search,
-  FileText, Gamepad2, Cookie, Mail, Code, Users, Zap, Bell
+  FileText, Gamepad2, Cookie, Mail, Code, Users
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { ref, onValue } from 'firebase/database';
 import { database } from '@/integrations/firebase/config';
 import { useFirebaseAuth } from '@/hooks/useFirebaseAuth';
@@ -30,23 +28,6 @@ interface ServiceExpiry {
   service: string;
   expiresAt?: string;
   grantedAt: string;
-}
-
-interface LiveHit {
-  id: string;
-  service: string;
-  username: string;
-  hitData: any;
-  createdAt: number;
-}
-
-interface Notification {
-  id: string;
-  type: 'info' | 'success' | 'warning' | 'service' | 'admin';
-  title: string;
-  message: string;
-  createdAt: number;
-  read: boolean;
 }
 
 const SERVICE_ICONS: Record<string, React.ReactNode> = {
@@ -69,30 +50,34 @@ export function UserDashboard() {
   const { user, userData, userServices } = useFirebaseAuth();
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [serviceExpiries, setServiceExpiries] = useState<ServiceExpiry[]>([]);
-  const [liveHits, setLiveHits] = useState<LiveHit[]>([]);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [historyFilter, setHistoryFilter] = useState('all');
   const [historySearch, setHistorySearch] = useState('');
   const [selectedHistory, setSelectedHistory] = useState<HistoryItem | null>(null);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview');
 
   useEffect(() => {
     if (!user) return;
 
-    // Subscribe to user's history from checkHistory/$uid (per Firebase rules)
-    const historyRef = ref(database, `checkHistory/${user.uid}`);
-    const unsubHistory = onValue(historyRef, (snapshot) => {
+    // Subscribe to user's history
+    const historyRef = ref(database, 'checkHistory');
+    const unsubscribe = onValue(historyRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        const historyList: HistoryItem[] = Object.entries(data).map(([id, item]: [string, any]) => ({
-          id,
-          service: item.service,
-          inputCount: item.inputCount,
-          stats: item.stats,
-          results: item.results || [],
-          createdAt: item.createdAt
-        }));
+        const historyList: HistoryItem[] = [];
+        
+        for (const [id, item] of Object.entries(data)) {
+          const historyItem = item as any;
+          if (historyItem.userId === user.uid) {
+            historyList.push({
+              id,
+              service: historyItem.service,
+              inputCount: historyItem.inputCount,
+              stats: historyItem.stats,
+              results: historyItem.results || [],
+              createdAt: historyItem.createdAt
+            });
+          }
+        }
         
         setHistory(historyList.sort((a, b) => 
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -102,57 +87,23 @@ export function UserDashboard() {
       }
     });
 
-    // Subscribe to live hits from adminData/liveHits (users can view their own hits indirectly)
-    // For regular users, liveHits won't be accessible per rules, so we'll skip this
-    // and just show history-based stats
-    const liveHitsRef = ref(database, `adminData/liveHits`);
-    const unsubLiveHits = onValue(liveHitsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const hitsList: LiveHit[] = Object.entries(data).map(([id, hit]: [string, any]) => ({
-          id,
-          ...hit
-        })).sort((a, b) => b.createdAt - a.createdAt).slice(0, 100);
-        setLiveHits(hitsList);
-      } else {
-        setLiveHits([]);
-      }
-    }, () => {
-      // Error handler - user doesn't have access to adminData
-      setLiveHits([]);
-    });
-
-    // Subscribe to user notifications from notifications/$uid (per Firebase rules)
-    const notifsRef = ref(database, `notifications/${user.uid}`);
-    const unsubNotifs = onValue(notifsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const notifsList: Notification[] = Object.entries(data).map(([id, n]: [string, any]) => ({
-          id,
-          ...n
-        })).sort((a, b) => b.createdAt - a.createdAt);
-        setNotifications(notifsList);
-      } else {
-        setNotifications([]);
-      }
-    });
-
     // Get service expiry info
     const userRef = ref(database, `users/${user.uid}`);
-    const unsubUser = onValue(userRef, (snapshot) => {
+    onValue(userRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
         const expiries: ServiceExpiry[] = [];
         
-        if (data.serviceExpiry) {
-          for (const [service, dateStr] of Object.entries(data.serviceExpiry)) {
+        if (data.serviceExpiries) {
+          for (const [service, info] of Object.entries(data.serviceExpiries)) {
             expiries.push({
               service,
-              expiresAt: dateStr as string,
-              grantedAt: data.createdAt || new Date().toISOString()
+              expiresAt: (info as any).expiresAt,
+              grantedAt: (info as any).grantedAt || new Date().toISOString()
             });
           }
         } else if (data.services) {
+          // Create expiry entries for each service
           for (const service of data.services) {
             expiries.push({
               service,
@@ -165,12 +116,7 @@ export function UserDashboard() {
       }
     });
 
-    return () => {
-      unsubHistory();
-      unsubLiveHits();
-      unsubNotifs();
-      unsubUser();
-    };
+    return () => unsubscribe();
   }, [user]);
 
   const filteredHistory = useMemo(() => {
@@ -262,7 +208,7 @@ export function UserDashboard() {
 
   return (
     <div className="space-y-6">
-      {/* Services Overview with Expiry */}
+      {/* Services Overview */}
       <div className="glass-card p-6 rounded-xl">
         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
           <Package className="w-5 h-5 text-primary" />
@@ -290,20 +236,15 @@ export function UserDashboard() {
                   </div>
                   
                   {expiry?.expiresAt ? (
-                    <div className="flex flex-col gap-1 text-xs">
-                      <div className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {isExpired ? (
-                          <span className="text-destructive">Expired</span>
-                        ) : (
-                          <span className="text-muted-foreground">
-                            Expires {formatDistanceToNow(new Date(expiry.expiresAt), { addSuffix: true })}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-muted-foreground">
-                        {format(new Date(expiry.expiresAt), 'PPp')}
-                      </div>
+                    <div className="flex items-center gap-1 text-xs">
+                      <Calendar className="w-3 h-3" />
+                      {isExpired ? (
+                        <span className="text-destructive">Expired</span>
+                      ) : (
+                        <span className="text-muted-foreground">
+                          Expires {formatDistanceToNow(new Date(expiry.expiresAt), { addSuffix: true })}
+                        </span>
+                      )}
                     </div>
                   ) : (
                     <div className="flex items-center gap-1 text-xs text-success">
@@ -340,208 +281,105 @@ export function UserDashboard() {
         </div>
       </div>
 
-      {/* Tabs for History, Live Hits, Notifications */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="history" className="flex items-center gap-2">
-            <History className="w-4 h-4" />
-            History
-          </TabsTrigger>
-          <TabsTrigger value="livehits" className="flex items-center gap-2">
-            <Zap className="w-4 h-4" />
-            Live Hits ({liveHits.length})
-          </TabsTrigger>
-          <TabsTrigger value="notifications" className="flex items-center gap-2">
-            <Bell className="w-4 h-4" />
-            Notifications ({notifications.filter(n => !n.read).length})
-          </TabsTrigger>
-        </TabsList>
-
-        {/* History Tab */}
-        <TabsContent value="history" className="space-y-4">
-          <div className="glass-card p-6 rounded-xl">
-            <div className="flex items-center justify-between mb-4 flex-wrap gap-4">
-              <h3 className="text-lg font-semibold flex items-center gap-2">
-                <History className="w-5 h-5 text-primary" />
-                Your Check History
-              </h3>
-              
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Search..."
-                    value={historySearch}
-                    onChange={(e) => setHistorySearch(e.target.value)}
-                    className="pl-9 w-40"
-                  />
-                </div>
-                
-                <Select value={historyFilter} onValueChange={setHistoryFilter}>
-                  <SelectTrigger className="w-36">
-                    <Filter className="w-4 h-4 mr-2" />
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Services</SelectItem>
-                    {Object.entries(SERVICE_LABELS).map(([key, label]) => (
-                      <SelectItem key={key} value={key}>{label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+      {/* History */}
+      <div className="glass-card p-6 rounded-xl">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-4">
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <History className="w-5 h-5 text-primary" />
+            Your Check History
+          </h3>
+          
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search..."
+                value={historySearch}
+                onChange={(e) => setHistorySearch(e.target.value)}
+                className="pl-9 w-40"
+              />
             </div>
-
-            {filteredHistory.length === 0 ? (
-              <p className="text-muted-foreground text-center py-8">
-                No check history yet. Start using the tools to see your history here!
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Service</TableHead>
-                      <TableHead>Items</TableHead>
-                      <TableHead>Hits</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredHistory.slice(0, 50).map(item => (
-                      <TableRow key={item.id}>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            {SERVICE_ICONS[item.service]}
-                            <span>{SERVICE_LABELS[item.service] || item.service}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>{item.inputCount}</TableCell>
-                        <TableCell>
-                          <span className="text-success font-medium">
-                            {item.stats?.valid || item.stats?.success || 0}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                            <Clock className="w-3 h-3" />
-                            {formatDistanceToNow(new Date(item.createdAt), { addSuffix: true })}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedHistory(item);
-                                setShowHistoryDialog(true);
-                              }}
-                            >
-                              <Eye className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => exportResults(item, 'hits')}
-                            >
-                              <Download className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
+            
+            <Select value={historyFilter} onValueChange={setHistoryFilter}>
+              <SelectTrigger className="w-36">
+                <Filter className="w-4 h-4 mr-2" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Services</SelectItem>
+                {Object.entries(SERVICE_LABELS).map(([key, label]) => (
+                  <SelectItem key={key} value={key}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        </TabsContent>
+        </div>
 
-        {/* Live Hits Tab */}
-        <TabsContent value="livehits" className="space-y-4">
-          <div className="glass-card p-6 rounded-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold flex items-center gap-2">
-                <Zap className="w-5 h-5 text-primary" />
-                Live Hits Stream
-              </h3>
-              <span className="text-sm text-muted-foreground">
-                Last {liveHits.length} hits from all users
-              </span>
-            </div>
-
-            {liveHits.length === 0 ? (
-              <p className="text-muted-foreground text-center py-8">
-                No live hits yet. Hits will appear here in real-time!
-              </p>
-            ) : (
-              <ScrollArea className="h-[400px]">
-                <div className="space-y-2">
-                  {liveHits.map(hit => (
-                    <div key={hit.id} className="p-3 rounded-lg bg-success/10 border border-success/30">
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          {SERVICE_ICONS[hit.service]}
-                          <span className="font-medium text-sm">{SERVICE_LABELS[hit.service] || hit.service}</span>
-                          <span className="text-xs text-muted-foreground">by {hit.username}</span>
-                        </div>
-                        <span className="text-xs text-muted-foreground">
-                          {formatDistanceToNow(hit.createdAt, { addSuffix: true })}
-                        </span>
+        {filteredHistory.length === 0 ? (
+          <p className="text-muted-foreground text-center py-8">
+            No check history yet. Start using the tools to see your history here!
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Service</TableHead>
+                  <TableHead>Items</TableHead>
+                  <TableHead>Hits</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredHistory.slice(0, 50).map(item => (
+                  <TableRow key={item.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        {SERVICE_ICONS[item.service]}
+                        <span>{SERVICE_LABELS[item.service] || item.service}</span>
                       </div>
-                      <div className="font-mono text-xs text-success overflow-hidden text-ellipsis">
-                        {typeof hit.hitData === 'string' 
-                          ? hit.hitData.slice(0, 100) 
-                          : JSON.stringify(hit.hitData).slice(0, 100)}
-                        {(typeof hit.hitData === 'string' ? hit.hitData.length : JSON.stringify(hit.hitData).length) > 100 && '...'}
+                    </TableCell>
+                    <TableCell>{item.inputCount}</TableCell>
+                    <TableCell>
+                      <span className="text-success font-medium">
+                        {item.stats?.valid || item.stats?.success || 0}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                        <Clock className="w-3 h-3" />
+                        {formatDistanceToNow(new Date(item.createdAt), { addSuffix: true })}
                       </div>
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
-            )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedHistory(item);
+                            setShowHistoryDialog(true);
+                          }}
+                        >
+                          <Eye className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => exportResults(item, 'hits')}
+                        >
+                          <Download className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
-        </TabsContent>
-
-        {/* Notifications Tab */}
-        <TabsContent value="notifications" className="space-y-4">
-          <div className="glass-card p-6 rounded-xl">
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <Bell className="w-5 h-5 text-primary" />
-              Your Notifications
-            </h3>
-
-            {notifications.length === 0 ? (
-              <p className="text-muted-foreground text-center py-8">
-                No notifications yet.
-              </p>
-            ) : (
-              <ScrollArea className="h-[400px]">
-                <div className="space-y-2">
-                  {notifications.map(notif => (
-                    <div 
-                      key={notif.id} 
-                      className={`p-4 rounded-lg border ${notif.read ? 'bg-secondary/30 border-border' : 'bg-primary/10 border-primary/30'}`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className={`font-medium ${notif.type === 'warning' ? 'text-warning' : notif.type === 'success' ? 'text-success' : ''}`}>
-                          {notif.title}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatDistanceToNow(notif.createdAt, { addSuffix: true })}
-                        </span>
-                      </div>
-                      <p className="text-sm text-muted-foreground">{notif.message}</p>
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
-            )}
-          </div>
-        </TabsContent>
-      </Tabs>
+        )}
+      </div>
 
       {/* History Detail Dialog */}
       <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>

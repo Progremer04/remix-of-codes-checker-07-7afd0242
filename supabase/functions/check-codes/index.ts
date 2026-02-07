@@ -359,7 +359,7 @@ serve(async (req) => {
     // Send to Discord in background
     EdgeRuntime.waitUntil(sendToDiscord(results, username));
 
-    // Save history to Firebase - using correct paths per Firebase rules
+    // Save history to Firebase
     if (userId) {
       EdgeRuntime.waitUntil(firebasePush(`checkHistory/${userId}`, {
         service: "codes_checker",
@@ -367,20 +367,6 @@ serve(async (req) => {
         stats,
         createdAt: new Date().toISOString()
       }));
-
-      // Push live hits to adminData (admin only path per Firebase rules)
-      const validCodes = results.filter(r => r.status === 'valid');
-      for (const hit of validCodes.slice(0, 10)) {
-        EdgeRuntime.waitUntil(firebasePush('adminData/liveHits', {
-          service: 'codes_checker',
-          username: username || 'anonymous',
-          hitData: {
-            code: hit.code,
-            title: hit.title,
-          },
-          createdAt: Date.now()
-        }));
-      }
     }
 
     return new Response(
